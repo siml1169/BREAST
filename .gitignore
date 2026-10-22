@@ -1,0 +1,10 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+local.properties
+tokens.json
+gateway_resources_dump.json
+*.pcap
+*.pcapng
