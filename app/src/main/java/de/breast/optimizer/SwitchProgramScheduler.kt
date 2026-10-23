@@ -330,7 +330,8 @@ class SwitchProgramScheduler(
     ): List<TimeWindow> {
         val raster = config.timeRasterMinutes.coerceAtLeast(15)
         val n = rasterSlots.size
-        val usableN = n.coerceAtLeast(1)
+        // Reserve the final 23:45 switchpoint slot for turning OFF so the next day never inherits ON across midnight
+        val usableN = (n - 1).coerceAtLeast(1)
 
         val numWindows = config.windowCount.coerceIn(1, (config.maxSwitchPointsPerDay / 2).coerceAtLeast(1))
         val maxOnSlots = ((config.targetOperationHoursPerDay * 60.0) / raster).roundToInt()
@@ -515,15 +516,10 @@ class SwitchProgramScheduler(
         }
 
         for (win in selectedWindows) {
-            val startMin = ((win.startMinutes / raster) * raster).coerceIn(0, maxTime)
+            val startMin = ((win.startMinutes / raster) * raster).coerceIn(0, maxTime - raster)
+            val endMin = (((win.endMinutes + raster - 1) / raster) * raster).coerceIn(startMin + raster, maxTime)
             points.add(SwitchPoint(dayOfWeek = dayOfWeekCode, setpoint = onSetpoint, time = startMin))
-            // Only add an OFF switchpoint if the window ends before midnight (1440).
-            // When the last 15 minutes of the day (23:45-24:00) are included in the optimal window,
-            // use only the single ON switchpoint so the heat pump stays ON through 24:00.
-            if (win.endMinutes < 1440) {
-                val endMin = (((win.endMinutes + raster - 1) / raster) * raster).coerceIn(startMin + raster, maxTime)
-                points.add(SwitchPoint(dayOfWeek = dayOfWeekCode, setpoint = offSetpoint, time = endMin))
-            }
+            points.add(SwitchPoint(dayOfWeek = dayOfWeekCode, setpoint = offSetpoint, time = endMin))
         }
 
         return points.sortedBy { it.time }

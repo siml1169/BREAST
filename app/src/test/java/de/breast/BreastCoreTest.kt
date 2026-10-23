@@ -156,14 +156,14 @@ class BreastCoreTest {
     }
 
     @Test
-    fun `SwitchProgramScheduler accepts last 15 minutes of day and emits a single switchpoint when optimal window ends at 24_00`() {
+    fun `SwitchProgramScheduler places explicit OFF switchpoint at 23_45 so next day never inherits ON state`() {
         val date = LocalDate.of(2026, 10, 22)
         val dayStartEpoch = date.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
         val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.0)
 
-        // Make 18:00-24:00 (including the last 15 minutes 23:45-24:00) the cheapest 6-hour block
+        // Make evening hours (17:00-24:00) the cheapest block
         val slots = (0 until 24).map { hour ->
-            val eurMwh = if (hour in 18..23) -30.0 else 120.0
+            val eurMwh = if (hour in 17..23) -30.0 else 120.0
             SpotPriceSlot(
                 startEpochSeconds = dayStartEpoch + hour * 3600L,
                 endEpochSeconds = dayStartEpoch + (hour + 1) * 3600L,
@@ -184,16 +184,14 @@ class BreastCoreTest {
         val plan = scheduler.buildDailySwitchSchedule(date, slots)
         assertNotNull(plan)
         assertEquals(1, plan!!.sharedWindows.size)
-        assertEquals(1080, plan.sharedWindows[0].startMinutes) // 18:00
-        assertEquals(1440, plan.sharedWindows[0].endMinutes)   // 24:00 (includes 23:45-24:00)
+        assertEquals(1065, plan.sharedWindows[0].startMinutes) // 17:45
+        assertEquals(1425, plan.sharedWindows[0].endMinutes)   // 23:45 (latest OFF slot before midnight)
         assertEquals(360, plan.plannedOperationMinutes)
-        // Only a single ON switchpoint at 18:00 (1080); no premature OFF switchpoint at 23:45!
-        assertEquals(1, plan.heatingSwitchPoints.size)
-        assertEquals(1080, plan.heatingSwitchPoints[0].time)
+        assertEquals(2, plan.heatingSwitchPoints.size)
+        assertEquals(1065, plan.heatingSwitchPoints[0].time)
         assertEquals("comfort2", plan.heatingSwitchPoints[0].setpoint)
-        assertEquals(1, plan.dhwSwitchPoints.size)
-        assertEquals(1080, plan.dhwSwitchPoints[0].time)
-        assertEquals("low", plan.dhwSwitchPoints[0].setpoint)
+        assertEquals(1425, plan.heatingSwitchPoints[1].time)
+        assertEquals("eco", plan.heatingSwitchPoints[1].setpoint)
     }
 
     @Test
