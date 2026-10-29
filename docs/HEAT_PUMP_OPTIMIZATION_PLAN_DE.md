@@ -350,7 +350,7 @@ Die Oberfläche zeigt die realen Schaltpunkte an:
   - **Nicht-negative Korridore ($+0.0\text{ h}$ feste Untergrenze):** Feste Verankerung der Mindestlaufzeit am Schieberegler in allen Modi.
   - **Proportionale Korridorausdehnung ($f(T_{\text{Ziel}})$):** Dynamische prozentuale Zuschläge: Budget $+0\%$, Komfort $+20\%$, Ausgewogen $+25\%$, Effizienz $+35\%$.
   - **Harmonisierung mit dem Scheduler-Quantisierer:** Mathematisches Runden der Ausdehnung auf diskrete Zeitschritte:
-    $$\Delta H_{\text{quantisiert}} = \operatorname{round}\left(\frac{T_{\text{Ziel}} \cdot r_{\text{Ausdehnung}}}{Q}\right) \cdot Q$$
+    $$\Delta H_{\text{quantisiert}} = \text{round}\left(\frac{T_{\text{Ziel}} \cdot r_{\text{Ausdehnung}}}{Q}\right) \cdot Q$$
     wobei $Q = 0.5\text{ h}$ ($30\text{ min}$) dem Schieberegler entspricht und sich sauber in ganzzahlige $15\text{ min}$-Rasterslots zerlegt.
   - **Abschnitt 5 im Thermodynamik-Prüfbericht:** Vollständige Transparenz über Schieberegler-Zielwert, Modus-Zuschlag, Quantisiererschritt, Slot-Suchbereich und tatsächlich realisiertes Delta im In-App-Dialog.
   - **Verifikation:** Unit-Tests von $2.0\text{ h}$ bis $16.0\text{ h}$ mit $0.5\text{ h}$ und $0.25\text{ h}$ Quantisierern; alle 59 Unit-Tests bestanden und live auf dem Smartphone mit der Bosch K30 synchronisiert.

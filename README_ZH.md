@@ -28,7 +28,7 @@
 * **闭环控制数字孪生仿真（`ControlUnitSimulator`）：** 精确仿真博世 HPC 410 / Rego 控制器的底层状态机逻辑，包含回水切入启机滞后（$-1.2\text{ K}$）与超温停机（$+0.5\text{ K}$）迟滞区间、混凝土砂浆常微分方程（ODE）传热计算及待机基准电耗。
 * **非负运行时间走廊（$+0.0\text{ h}$ 刚性底线）：** 用户设定的目标每日运行时长滑块在所有模式下均作为绝对底线生效。温和秋季天气下算法绝不会跌破滑块意图，同时保留单向正午光热扩展空间。
 * **比例弹性扩展与调度量化器协同（Harmonized Quantizer）：** 彻底废除生硬的 1.5–2.0 小时静态硬编码限制，将扩展时长表达为设定时长（$T_{\text{set}}$）的比例函数并与调度量化器对齐：
-  $$\Delta H_{\text{quantized}} = \operatorname{round}\left(\frac{T_{\text{set}} \times r_{\text{expansion}}}{Q}\right) \times Q$$
+  $$\Delta H_{\text{quantized}} = \text{round}\left(\frac{T_{\text{set}} \times r_{\text{expansion}}}{Q}\right) \times Q$$
   其中 $Q = 0.5\text{ h}$（30 分钟）完美匹配交互滑块步长，并在底层严格整除为整数个 15 分钟栅格槽位，杜绝非整数碎片化插槽。
 * **四种定制化策略偏好：**
   1. **舒适优先（Comfort Priority）：** 最小化室内温差波动（$w_c = 0.60$），允许至多 $+20\%$ 弹性扩展以杜绝日常采暖期间地暖地面与蓄热层大幅降温失温。

@@ -28,7 +28,7 @@ Die App kommuniziert über **SingleKey ID OAuth2 + PKCE** direkt mit der **Point
 * **Closed-Loop-Regelungs-Digital-Twin (`ControlUnitSimulator`):** Reproduziert exakt die Zustandsmaschine des Bosch HPC 410 / Rego-Reglers, einschließlich Rücklauftemperatur-Einschalthysterese ($-1.2\text{ K}$) und Ausschalthysterese ($+0.5\text{ K}$), Estrich-Wärmedifferenzialgleichung (ODE) und Standby-Verbrauch.
 * **Nicht-negative Laufzeitkorridore ($+0.0\text{ h}$ feste Untergrenze):** Der Ziel-Laufzeit-Schieberegler des Nutzers wirkt in allen Modi als strikte, nicht unterschreitbare Untergrenze. Ein unerwünschtes Einbrechen der Betriebszeit bei mildem Herbstwetter ist ausgeschlossen, während einseitige solare Tages-Ausdehnung voll erhalten bleibt.
 * **Proportionale Korridorausdehnung & Quantisierer-Harmonisierung:** Ersetzt starre Stundengrenzen durch eine mathematische Funktion der gewählten Ziel-Laufzeit ($T_{\text{Ziel}}$):
-  $$\Delta H_{\text{quantisiert}} = \operatorname{round}\left(\frac{T_{\text{Ziel}} \times r_{\text{Ausdehnung}}}{Q}\right) \times Q$$
+  $$\Delta H_{\text{quantisiert}} = \text{round}\left(\frac{T_{\text{Ziel}} \times r_{\text{Ausdehnung}}}{Q}\right) \times Q$$
   wobei $Q = 0.5\text{ h}$ ($30\text{ min}$) dem Schieberegler entspricht und sich exakt in ganzzahlige $15\text{ min}$-Rasterslots des Planers zerlegt.
 * **4 Maßgeschneiderte Betriebs-Präferenzen:**
   1. **Komfort-Priorität:** Minimiert Schwankungen der Raumtemperatur ($w_c = 0.60$), erlaubt bis zu $+20\%$ Mehrlaufzeit gegen Auskühlen des Estrichs während der Nutzungszeiten.

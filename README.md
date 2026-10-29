@@ -28,7 +28,7 @@ The app interfaces directly with Bosch's **PointT Cloud API** (`pointt-api.bosch
 * **Closed-Loop Control Digital Twin (`ControlUnitSimulator`):** Reproduces the exact state machine of the Bosch HPC 410 / Rego control unit, including return temperature cut-in hysteresis ($-1.2\text{ K}$) and cut-out ($+0.5\text{ K}$), concrete screed thermal differential ODE, and standby consumption.
 * **Non-Negative Runtime Corridors ($+0.0\text{ h}$ Firm Floor):** The user's Target Daily Runtime slider acts as a firm, non-contracting floor across all modes, preventing mild-weather optimizer collapse while permitting one-sided daytime solar expansion.
 * **Proportional Runtime Expansion & Scheduler Quantizer Harmonization:** Eliminates arbitrary static hour caps by scaling allowable extra runtime dynamically as a function of dialed target hours ($T_{\text{set}}$):
-  $$\Delta H_{\text{quantized}} = \operatorname{round}\left(\frac{T_{\text{set}} \times r_{\text{expansion}}}{Q}\right) \times Q$$
+  $$\Delta H_{\text{quantized}} = \text{round}\left(\frac{T_{\text{set}} \times r_{\text{expansion}}}{Q}\right) \times Q$$
   where $Q = 0.5\text{ h}$ ($30\text{ min}$) matches the duration slider and partitions into exact integer multiples of $15\text{ min}$ raster slots.
 * **4 Tailored Optimization Preferences:**
   1. **Comfort Priority:** Minimizes indoor temperature variance ($w_c = 0.60$), allowing up to $+20\%$ extra runtime to prevent floor slab cooldown during active occupancy.

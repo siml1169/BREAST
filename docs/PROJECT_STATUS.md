@@ -124,7 +124,7 @@
   * Balanced: $+25\%$ extra ($r = 0.25$).
   * Efficiency Priority: $+35\%$ extra ($r = 0.35$).
 * **Scheduler Quantizer Harmonization:** Mathematically snapped expansion hours to discrete scheduling quanta:
-  $$\Delta H_{\text{quantized}} = \operatorname{round}\left(\frac{T_{\text{set}} \cdot r_{\text{expansion}}}{Q}\right) \cdot Q$$
+  $$\Delta H_{\text{quantized}} = \text{round}\left(\frac{T_{\text{set}} \cdot r_{\text{expansion}}}{Q}\right) \cdot Q$$
   where $Q = 0.5\text{ h}$ ($30\text{ min}$) aligns with the user duration slider and partitions cleanly into $15\text{ min}$ raster slots.
 * **Continuous Online Return Temperature Learning (`AdaptiveThermalObserver.kt`):** Implemented continuous nocturnal telemetry observation with EMA online parameter calibration ($H_{\text{bld}}$, cooling rate $\kappa$) filtered by strict $R^2 \ge 0.65$ quality thresholds, dynamically informing `BuildingEnergyBalanceModel`.
 * **Window-Specific vs. 24h Total Energy & Cost Double-Tracking:** Separated active window operating consumption from continuous 24-hour parasitic draw ($50\text{ W}$ secondary circulation pump and electronics) across UI badges, sync states, and in-app audit reporting.

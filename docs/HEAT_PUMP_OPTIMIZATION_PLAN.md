@@ -353,7 +353,7 @@ The UI explicitly renders the translated switch points rather than only abstract
   - **Non-Negative Corridors ($+0.0\text{ h}$ Firm Floor):** Anchored minimum corridor duration strictly to user slider target across all modes, preventing unwanted contraction while allowing one-sided daytime expansion.
   - **Proportional Expansion Corridors ($f(T_{\text{set}})$):** Replaced static $1.5\text{–}2.0\text{ h}$ constants with dynamic proportional functions: Budget $+0\%$, Comfort $+20\%$, Balanced $+25\%$, Efficiency $+35\%$.
   - **Scheduler Quantizer Harmonization:** Snapped continuous expansions to discrete scheduling quanta:
-    $$\Delta H_{\text{quantized}} = \operatorname{round}\left(\frac{T_{\text{set}} \cdot r_{\text{expansion}}}{Q}\right) \cdot Q$$
+    $$\Delta H_{\text{quantized}} = \text{round}\left(\frac{T_{\text{set}} \cdot r_{\text{expansion}}}{Q}\right) \cdot Q$$
     where $Q = 0.5\text{ h}$ ($30\text{ min}$) aligns with user slider steps and breaks down into integer multiples of $15\text{ min}$ raster slots.
   - **Thermodynamic Audit Section 5:** Exposed dynamic corridor details, quantizer step size, slot evaluation bounds, and applied duration delta in the live audit modal.
   - **Verification:** Unit tests covering targets from $2.0\text{ h}$ to $16.0\text{ h}$ and $0.5\text{ h} / 0.25\text{ h}$ quantizers. All 59 unit tests passed and verified live on device with Bosch K30 heat pump.

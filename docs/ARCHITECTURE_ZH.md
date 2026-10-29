@@ -154,7 +154,7 @@ flowchart TD
   3. **舒适度效用 ($J_{\text{comfort}}$)**：基于建筑物散热模拟，严厉惩罚室内温度低于设定目标的降温区间。
 * **四种预设偏好模式与比例扩展走廊：**
   * **非负弹性走廊（$+0.0\text{ h}$ 刚性底线）**：全模式严格将最小运行走廊硬性锚定在用户滑块设定时长，坚决杜绝温和天气下时长自发收缩或塌陷。
-  * **调度器步长量化协调（Harmonized Quantizer）**：离散化基准步长 $Q = 0.5\text{ h}$（$30\text{ 分钟}$）将连续比例扩展公式 $\Delta H = \operatorname{round}\left(\frac{T_{\text{目标}} \cdot r}{Q}\right) \cdot Q$ 与界面调节滑块及 15 分钟栅格槽位无缝对齐。
+  * **调度器步长量化协调（Harmonized Quantizer）**：离散化基准步长 $Q = 0.5\text{ h}$（$30\text{ 分钟}$）将连续比例扩展公式 $\Delta H = \text{round}\left(\frac{T_{\text{目标}} \cdot r}{Q}\right) \cdot Q$ 与界面调节滑块及 15 分钟栅格槽位无缝对齐。
   * **舒适优先（Comfort Priority）**：$w = [0.15, 0.25, 0.60]$，扩展比例 $r = +20\%$，走廊区间 $[0.0\text{h}, \text{quantize}(0.20 \cdot T_{\text{目标}})]$。极致平稳室内体感，杜绝居住时段地面发凉。
   * **均衡模式（Balanced，推荐）**：$w = [0.35, 0.35, 0.30]$，扩展比例 $r = +25\%$，走廊区间 $[0.0\text{h}, \text{quantize}(0.25 \cdot T_{\text{目标}})]$。在现货电价、卡诺 COP 能效提振与室内舒适度之间取得最佳平衡，适度向上吸纳午间太阳能光伏低电价时段。
   * **能效优先（Efficiency / Bang for Buck）**：$w = [0.15, 0.35, 0.50]$，扩展比例 $r = +35\%$，走廊区间 $[0.0\text{h}, \text{quantize}(0.35 \cdot T_{\text{目标}})]$。最大化每欧元实际产热量（$\frac{\text{COP}}{c_{\text{gross}}}$），引入显式时长奖励项，鼓励在正午及午后光热最高峰（$10:00\text{–}16:30$）以轻载变频（$25\%\text{–}35\%$）长周期平稳巡航，同时完全受控于预算。

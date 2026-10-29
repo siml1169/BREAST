@@ -349,7 +349,7 @@ $$t_{\text{raster, end}} \le 1425 \quad (23:45)$$
   - **非负弹性走廊（$+0.0\text{ h}$ 刚性底线）：** 全模式将最小运行走廊硬性锚定在用户滑块设定时长，坚决杜绝温和天气下时长自发塌缩，仅保留白昼单向向上扩展。
   - **比例扩展函数走廊（$f(T_{\text{set}})$）：** 彻底废除 $1.5\text{–}2.0\text{ h}$ 静态经验常数硬编码，重构为与目标时长成比例的动态函数：预算优先 $+0\%$、舒适优先 $+20\%$、均衡模式 $+25\%$、效率优先 $+35\%$。
   - **调度器步长量化协调（Harmonized Quantizer）：** 将连续比例时长精准量化对齐至调度离散步长：
-    $$\Delta H_{\text{quantized}} = \operatorname{round}\left(\frac{T_{\text{set}} \cdot r_{\text{expansion}}}{Q}\right) \cdot Q$$
+    $$\Delta H_{\text{quantized}} = \text{round}\left(\frac{T_{\text{set}} \cdot r_{\text{expansion}}}{Q}\right) \cdot Q$$
     其中 $Q = 0.5\text{ h}$ ($30\text{ 分钟}$)，完美契合用户滑块调节步长，并整除为 2 个 $15\text{ 分钟}$ 调度基准时隙。
   - **热力学审计弹窗第 5 节：** 实时展示动态走廊参数、量化步长、时隙评估上下界及最终执行的时长增量。
   - **单元测试与真机验证：** 覆盖 $2.0\text{ h}$ 至 $16.0\text{ h}$ 全范围目标及 $0.5\text{ h} / 0.25\text{ h}$ 量化步长，全套 59 项单元测试全部通过，并在 Pixel 10 Pro 连接博世 K30 实机上完成联调验证。
