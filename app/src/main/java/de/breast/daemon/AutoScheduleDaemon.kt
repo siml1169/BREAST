@@ -152,14 +152,15 @@ class AutoScheduleDaemon(
         val todayAlreadyApplied = !forcePush && (state.lastSyncedTodayDate == todayStr || state.lastSyncedTomorrowDate == todayStr)
         val needsTodaySync = forcePush || !todayAlreadyApplied
 
-        val isAfterNoon = now.hour >= DAY_AHEAD_RELEASE_START_HOUR
+        val isDynamic = spotClient.tariffConfig.pricingModel == de.breast.spot.TariffPricingModel.DYNAMIC_SPOT
+        val tomorrowPricesReady = !isDynamic || now.hour >= DAY_AHEAD_RELEASE_START_HOUR
         val tomorrowAlreadyApplied = !forcePush && (state.lastSyncedTomorrowDate == tomorrowStr)
-        val needsTomorrowSync = forcePush || (isAfterNoon && !tomorrowAlreadyApplied)
+        val needsTomorrowSync = forcePush || (tomorrowPricesReady && !tomorrowAlreadyApplied)
 
         if (!needsTodaySync && !needsTomorrowSync) {
             val note = state.appliedScheduleNote?.let { " [Noted: $it]" } ?: ""
             logs.add(
-                "[$nowIso] Schedule already applied & noted$note (today=$todayStr, tomorrowSynced=${state.lastSyncedTomorrowDate ?: "pending 12:00"})."
+                "[$nowIso] Schedule already applied & noted$note (today=$todayStr, tomorrowSynced=${state.lastSyncedTomorrowDate ?: (if (isDynamic) "pending 12:00" else "ready")})."
             )
             return HourlyCheckResult(
                 timestampIso = nowIso,
@@ -171,7 +172,11 @@ class AutoScheduleDaemon(
             )
         }
 
-        logs.add("[$nowIso] Checking EPEX Spot Day-Ahead prices (sources=${spotSources.joinToString { it.id }}, hour=${now.hour}:00)...")
+        if (isDynamic) {
+            logs.add("[$nowIso] Checking EPEX Spot Day-Ahead prices (sources=${spotSources.joinToString { it.id }}, hour=${now.hour}:00)...")
+        } else {
+            logs.add("[$nowIso] Composing prices for ${spotClient.tariffConfig.pricingModel.displayName}...")
+        }
         val spotSlots = spotClient.fetchDayAheadPrices(today, tomorrow, spotSources)
 
         val resolvedGatewayId = explicitGatewayId ?: if (!dryRun) {
@@ -215,12 +220,13 @@ class AutoScheduleDaemon(
             val todayConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
             scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)?.let { plansToSync.add(it) }
         }
-        if (tomorrowComplete && (isAfterNoon || forcePush || needsTomorrowSync)) {
+        if (tomorrowComplete && (tomorrowPricesReady || forcePush || needsTomorrowSync)) {
             scheduler.buildDailySwitchSchedule(tomorrow, spotSlots, weatherForecast, effectiveHolisticConfig)?.let {
                 plansToSync.add(it)
-                logs.add("[$nowIso] Tomorrow's ($tomorrowStr) Day-Ahead prices published! Computed holistic schedule window.")
+                val priceNote = if (isDynamic) "Tomorrow's ($tomorrowStr) Day-Ahead prices published!" else "Tomorrow's ($tomorrowStr) ${spotClient.tariffConfig.pricingModel.displayName} schedule compiled!"
+                logs.add("[$nowIso] $priceNote Computed holistic schedule window.")
             }
-        } else if (isAfterNoon && !tomorrowComplete) {
+        } else if (tomorrowPricesReady && !tomorrowComplete) {
             logs.add("[$nowIso] Tomorrow's ($tomorrowStr) Day-Ahead prices not yet published (12:00-15:00 window). Will retry next hour.")
         }
 
@@ -384,7 +390,7 @@ class AutoScheduleDaemon(
 
         val newState = ScheduleSyncState(
             lastSyncedTodayDate = if (syncSucceeded && todayComplete) todayStr else state.lastSyncedTodayDate,
-            lastSyncedTomorrowDate = if (syncSucceeded && (isAfterNoon || forcePush) && tomorrowComplete) tomorrowStr else state.lastSyncedTomorrowDate,
+            lastSyncedTomorrowDate = if (syncSucceeded && (tomorrowPricesReady || forcePush) && tomorrowComplete) tomorrowStr else state.lastSyncedTomorrowDate,
             lastAppliedSliderTempC = if (syncSucceeded) cfg.targetHeatingTempC else state.lastAppliedSliderTempC,
             lastAppliedOperationHours = if (syncSucceeded) cfg.targetOperationHoursPerDay else state.lastAppliedOperationHours,
             lastAppliedBudgetEuro = if (syncSucceeded) cfg.dailyBudgetEuro else state.lastAppliedBudgetEuro,
@@ -465,8 +471,8 @@ class SpotScheduleJobService : JobService() {
 
             val authManager = SingleKeyAuthManager(httpClient, tokenStore)
             val pointTClient = PointTApiClient(httpClient, authManager)
-            val spotClient = SpotPriceClient(httpClient)
-            val userSettings = UserSettingsStore(applicationContext)
+            val spotClient = SpotPriceClient(httpClient, settingsStore.buildTariffConfig())
+            val userSettings = settingsStore
             val telemetryStore = if (userSettings.telemetryCollectionEnabled) {
                 SqliteTelemetryStore(applicationContext)
             } else {
@@ -577,7 +583,7 @@ class SpotScheduleJobService : JobService() {
             val nextTick = now.plusHours(1).withMinute(5).withSecond(0).withNano(0)
             val triggerAtMillis = nextTick.toInstant().toEpochMilli()
 
-            val intent = Intent(context, BootCompletedReceiver::class.java).apply {
+            val intent = Intent(context, ScheduleAlarmReceiver::class.java).apply {
                 action = ACTION_SYSTEM_CRON_TICK
             }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
@@ -597,7 +603,7 @@ class SpotScheduleJobService : JobService() {
             scheduler.cancel(JOB_ID_ONE_SHOT)
 
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, BootCompletedReceiver::class.java).apply {
+            val intent = Intent(context, ScheduleAlarmReceiver::class.java).apply {
                 action = ACTION_SYSTEM_CRON_TICK
             }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
@@ -616,7 +622,7 @@ class SpotScheduleJobService : JobService() {
             val intervalClamped = intervalMinutes.coerceIn(1, 60)
             val triggerAtMillis = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(intervalClamped.toLong())
 
-            val intent = Intent(context, BootCompletedReceiver::class.java).apply {
+            val intent = Intent(context, ScheduleAlarmReceiver::class.java).apply {
                 action = ACTION_TELEMETRY_TICK
             }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
@@ -632,7 +638,7 @@ class SpotScheduleJobService : JobService() {
 
         fun cancelTelemetryAlarm(context: Context) {
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, BootCompletedReceiver::class.java).apply {
+            val intent = Intent(context, ScheduleAlarmReceiver::class.java).apply {
                 action = ACTION_TELEMETRY_TICK
             }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
@@ -644,12 +650,39 @@ class SpotScheduleJobService : JobService() {
 }
 
 /**
- * OS-level BroadcastReceiver that handles:
- * 1. Device reboot (`BOOT_COMPLETED`) and app update (`MY_PACKAGE_REPLACED`)
- * 2. System-level `AlarmManager` cron ticks (`ACTION_SYSTEM_CRON_TICK`)
- * The app process does NOT need to stay running in memory; Android's `system_server` wakes this receiver on schedule.
+ * OS-level BroadcastReceiver that handles device reboot (`BOOT_COMPLETED`)
+ * and app update (`MY_PACKAGE_REPLACED`).
+ * Exported to Android OS, strictly limited to system boot events.
  */
 class BootCompletedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action ?: return
+        BreastNotificationHelper.updateBackgroundActiveNotification(context)
+
+        when (action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                val settings = UserSettingsStore(context)
+                if (settings.autoBackgroundEnabled) {
+                    SpotScheduleJobService.scheduleHourlyBackgroundSync(context)
+                }
+                if (settings.telemetryCollectionEnabled) {
+                    SpotScheduleJobService.scheduleNextTelemetryAlarm(context, settings.telemetryIntervalMinutes)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Internal non-exported BroadcastReceiver that handles System-level `AlarmManager` cron ticks:
+ * 1. `ACTION_SYSTEM_CRON_TICK` (Day-ahead spot price fetch & schedule sync)
+ * 2. `ACTION_TELEMETRY_TICK` (Periodic thermodynamic telemetry snapshot)
+ *
+ * Configured as `android:exported="false"` in AndroidManifest to prevent external apps
+ * from spoofing alarms or triggering unauthorized background work.
+ */
+class ScheduleAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
         val settings = UserSettingsStore(context)
@@ -681,21 +714,10 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
         BreastNotificationHelper.updateBackgroundActiveNotification(context)
 
-        when (action) {
-            Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                if (settings.autoBackgroundEnabled) {
-                    SpotScheduleJobService.scheduleHourlyBackgroundSync(context)
-                }
-                if (settings.telemetryCollectionEnabled) {
-                    SpotScheduleJobService.scheduleNextTelemetryAlarm(context, settings.telemetryIntervalMinutes)
-                }
-            }
-            SpotScheduleJobService.ACTION_SYSTEM_CRON_TICK -> {
-                if (settings.autoBackgroundEnabled) {
-                    SpotScheduleJobService.scheduleNextSystemAlarm(context)
-                    SpotScheduleJobService.triggerImmediateSyncJob(context)
-                }
+        if (action == SpotScheduleJobService.ACTION_SYSTEM_CRON_TICK) {
+            if (settings.autoBackgroundEnabled) {
+                SpotScheduleJobService.scheduleNextSystemAlarm(context)
+                SpotScheduleJobService.triggerImmediateSyncJob(context)
             }
         }
     }

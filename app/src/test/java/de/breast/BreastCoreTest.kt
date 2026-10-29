@@ -29,6 +29,9 @@ import de.breast.spot.SpotPriceClient
 import de.breast.spot.SpotPriceSlot
 import de.breast.spot.SpotPriceSource
 import de.breast.spot.VattenfallTariffConfig
+import de.breast.spot.ElectricityTariffConfig
+import de.breast.spot.TariffPricingModel
+import de.breast.spot.TimeOfUseTimetable
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -2353,5 +2356,513 @@ class BreastCoreTest {
             "Breakdown should report physically consistent target return of ~24.8°C (was: ${plan.physicsBreakdown})",
             plan.physicsBreakdown!!.contains("Target return: 24.8°C")
         )
+    }
+
+    @Test
+    fun `ElectricityTariffConfig computes gross price matching utility letter contract breakdown`() {
+        // Default German tariff: 19% VAT, 21.3446 ct/kWh net working price surcharge (from utility letter)
+        val defaultTariff = ElectricityTariffConfig()
+        assertEquals(21.3446, defaultTariff.totalNetSurchargeCtPerKwh, 1e-4)
+        assertEquals(25.400, defaultTariff.computeGrossCtPerKwh(0.0), 1e-2)
+        assertEquals(39.922, defaultTariff.computeGrossCtPerKwh(122.03365), 1e-2)
+
+        // Austrian tariff: 20% VAT
+        val austriaTariff = defaultTariff.copy(vatRate = 0.20)
+        assertEquals(25.6135, austriaTariff.computeGrossCtPerKwh(0.0), 1e-2)
+        // (12.203365 + 21.3446) * 1.20 = 40.2576 ct/kWh
+        assertEquals(40.258, austriaTariff.computeGrossCtPerKwh(122.03365), 1e-2)
+
+        // Reduced 7% VAT
+        val reducedTariff = defaultTariff.copy(vatRate = 0.07)
+        assertEquals(22.839, reducedTariff.computeGrossCtPerKwh(0.0), 1e-2)
+
+        // 0% Tax Exempt
+        val exemptTariff = defaultTariff.copy(vatRate = 0.0)
+        assertEquals(21.345, exemptTariff.computeGrossCtPerKwh(0.0), 1e-2)
+    }
+
+    @Test
+    fun `TimeOfUseTimetable accurately classifies night off-peak day peak and weekend full-day off-peak`() {
+        val timetable = TimeOfUseTimetable(
+            peakPriceGrossCtPerKwh = 38.0,
+            offPeakPriceGrossCtPerKwh = 24.0,
+            offPeakStartHour = 22,
+            offPeakEndHour = 6,
+            weekendAllOffPeak = true
+        )
+        val zone = SpotPriceClient.BERLIN_ZONE
+
+        // Wednesday 14:00 (Weekday Peak)
+        val wednesdayDay = java.time.ZonedDateTime.of(2026, 11, 4, 14, 0, 0, 0, zone)
+        assertFalse(timetable.isOffPeak(wednesdayDay))
+        assertEquals(38.0, timetable.getGrossPrice(wednesdayDay), 1e-3)
+
+        // Wednesday 22:30 (Weekday Off-Peak Night Start)
+        val wednesdayNight = java.time.ZonedDateTime.of(2026, 11, 4, 22, 30, 0, 0, zone)
+        assertTrue(timetable.isOffPeak(wednesdayNight))
+        assertEquals(24.0, timetable.getGrossPrice(wednesdayNight), 1e-3)
+
+        // Thursday 03:00 (Weekday Off-Peak Past Midnight)
+        val thursdayEarly = java.time.ZonedDateTime.of(2026, 11, 5, 3, 0, 0, 0, zone)
+        assertTrue(timetable.isOffPeak(thursdayEarly))
+        assertEquals(24.0, timetable.getGrossPrice(thursdayEarly), 1e-3)
+
+        // Thursday 05:59 (Weekday Off-Peak Before End)
+        val thursdayBeforeEnd = java.time.ZonedDateTime.of(2026, 11, 5, 5, 59, 0, 0, zone)
+        assertTrue(timetable.isOffPeak(thursdayBeforeEnd))
+
+        // Thursday 06:01 (Weekday Peak After End)
+        val thursdayMorning = java.time.ZonedDateTime.of(2026, 11, 5, 6, 1, 0, 0, zone)
+        assertFalse(timetable.isOffPeak(thursdayMorning))
+        assertEquals(38.0, timetable.getGrossPrice(thursdayMorning), 1e-3)
+
+        // Saturday 12:00 (Weekend All-Day Off-Peak)
+        val saturdayNoon = java.time.ZonedDateTime.of(2026, 11, 7, 12, 0, 0, 0, zone)
+        assertTrue(timetable.isOffPeak(saturdayNoon))
+        assertEquals(24.0, timetable.getGrossPrice(saturdayNoon), 1e-3)
+
+        // Sunday 20:00 (Weekend All-Day Off-Peak)
+        val sundayEvening = java.time.ZonedDateTime.of(2026, 11, 8, 20, 0, 0, 0, zone)
+        assertTrue(timetable.isOffPeak(sundayEvening))
+        assertEquals(24.0, timetable.getGrossPrice(sundayEvening), 1e-3)
+    }
+
+    @Test
+    fun `ElectricityTariffConfig generateSyntheticSlots generates full 24h slots with exact peak and off-peak pricing`() {
+        val date = LocalDate.of(2026, 11, 4) // Wednesday
+        val tariff = ElectricityTariffConfig(
+            pricingModel = TariffPricingModel.TIME_OF_USE,
+            touTimetable = TimeOfUseTimetable(
+                peakPriceGrossCtPerKwh = 38.0,
+                offPeakPriceGrossCtPerKwh = 24.0,
+                offPeakStartHour = 22,
+                offPeakEndHour = 6,
+                weekendAllOffPeak = true
+            )
+        )
+        val slots = tariff.generateSyntheticSlots(date, date)
+        assertEquals(96, slots.size) // 96 x 15-minute intervals = 24 hours
+
+        val client = SpotPriceClient(OkHttpClient(), tariff)
+        assertTrue("Synthetic slots must cover full day", client.hasCompleteDayPrices(date, slots))
+
+        // Slot at 02:00 (index 8: 8 * 15m = 2h) must have off-peak rate 24.0 ct/kWh
+        assertEquals(24.0, slots[8].totalGrossCtPerKwh, 1e-3)
+
+        // Slot at 12:00 (index 48: 48 * 15m = 12h) must have peak rate 38.0 ct/kWh
+        assertEquals(38.0, slots[48].totalGrossCtPerKwh, 1e-3)
+    }
+
+    @Test
+    fun `HolisticScheduleOptimizer schedules heating cleanly into off-peak window under Time-of-Use pricing`() {
+        val date = LocalDate.of(2026, 11, 4) // Wednesday
+        val tariff = ElectricityTariffConfig(
+            pricingModel = TariffPricingModel.TIME_OF_USE,
+            touTimetable = TimeOfUseTimetable(
+                peakPriceGrossCtPerKwh = 38.0,
+                offPeakPriceGrossCtPerKwh = 24.0,
+                offPeakStartHour = 22,
+                offPeakEndHour = 6,
+                weekendAllOffPeak = true
+            )
+        )
+        val slots = tariff.generateSyntheticSlots(date, date)
+
+        // Uniform mild weather forecast so COP does not overpower price spread
+        val weatherForecast = (0 until 24).map { h ->
+            HourlyWeatherForecast(
+                dateTime = String.format(java.util.Locale.US, "2026-11-04T%02d:00", h),
+                outdoorTempC = 7.0
+            )
+        }
+
+        val optimizer = HolisticScheduleOptimizer(
+            config = HolisticOptimizationConfig(
+                targetHeatingTempC = 21.5,
+                targetDailyRuntimeHours = 6.0,
+                preference = OptimizationPreference.BUDGET
+            )
+        )
+
+        val plan = optimizer.buildSchedule(date, slots, weatherForecast)
+        assertNotNull(plan)
+        assertEquals(1, plan!!.sharedWindows.size)
+        val window = plan.sharedWindows[0]
+
+        // Under 38 ct vs 24 ct pricing with flat weather, the budget optimizer must schedule during off-peak hours (00:00-06:00)
+        val startHour = window.startMinutes / 60
+        assertTrue(
+            "Under TOU pricing, scheduled start ($startHour:00) must be in the off-peak window (00:00 to 06:00 or 22:00 to 24:00)",
+            startHour in 0..5 || startHour in 22..23
+        )
+    }
+
+    @Test
+    fun `Price input text parsing supports European comma and standard dot decimals`() {
+        fun parseInput(raw: String?): Double? {
+            return raw?.trim()?.replace(',', '.')?.toDoubleOrNull()
+        }
+
+        // Standard dot notation
+        assertEquals(21.3446, parseInput("21.3446")!!, 1e-4)
+        assertEquals(13.80, parseInput("13.80")!!, 1e-4)
+        assertEquals(19.0, parseInput("19.0")!!, 1e-4)
+
+        // European comma notation (standard on German/Austrian phone keyboards)
+        assertEquals(21.3446, parseInput("21,3446")!!, 1e-4)
+        assertEquals(13.80, parseInput("13,80")!!, 1e-4)
+        assertEquals(19.0, parseInput("19,0")!!, 1e-4)
+        assertEquals(38.5, parseInput(" 38,5 ")!!, 1e-4)
+        assertEquals(0.0, parseInput("0,0")!!, 1e-4)
+
+        // Invalid or empty input produces null safely
+        assertNull(parseInput(""))
+        assertNull(parseInput("   "))
+        assertNull(parseInput("abc"))
+        assertNull(parseInput("21,34,56"))
+    }
+
+    @Test
+    fun `Price input formatting formats clean decimals without trailing zero clutter`() {
+        fun formatPriceValue(value: Double, maxDecimals: Int = 4): String {
+            return if (value == value.toLong().toDouble()) {
+                String.format(java.util.Locale.US, "%.1f", value)
+            } else {
+                val s = String.format(java.util.Locale.US, "%.${maxDecimals}f", value)
+                s.trimEnd('0').let { if (it.endsWith('.')) "${it}0" else it }
+            }
+        }
+
+        assertEquals("21.3446", formatPriceValue(21.3446, 4))
+        assertEquals("13.8", formatPriceValue(13.80, 2))
+        assertEquals("19.0", formatPriceValue(19.0, 2))
+        assertEquals("0.0", formatPriceValue(0.0, 2))
+        assertEquals("38.0", formatPriceValue(38.0, 2))
+        assertEquals("24.5", formatPriceValue(24.50, 2))
+        assertEquals("21.345", formatPriceValue(21.3450, 4))
+    }
+
+    @Test
+    fun `BreastI18n localization provides complete strings across EN, DE, and ZH without blank fields`() {
+        for (lang in de.breast.auth.AppLanguage.entries) {
+            val strings = de.breast.ui.BreastI18n.get(lang)
+            assertNotNull(strings)
+            assertTrue("App title must not be blank for $lang", strings.appTitle.isNotBlank())
+            assertTrue("Settings title must not be blank for $lang", strings.settingsTitle.isNotBlank())
+            assertTrue("Done label must not be blank for $lang", strings.done.isNotBlank())
+            assertTrue("Refresh button must not be blank for $lang", strings.refreshTelemetryBtn.isNotBlank())
+            assertTrue("Dynamic spot model label must not be blank for $lang", strings.dynamicSpotModel.isNotBlank())
+            assertTrue("ToU model label must not be blank for $lang", strings.touModel.isNotBlank())
+            assertTrue("Flat rate model label must not be blank for $lang", strings.flatRateModel.isNotBlank())
+            assertTrue("Holistic section title must not be blank for $lang", strings.holisticSectionTitle.isNotBlank())
+            assertTrue("Sources section title must not be blank for $lang", strings.sourcesSectionTitle.isNotBlank())
+            assertTrue("Telemetry recording title must not be blank for $lang", strings.telemetryRecSectionTitle.isNotBlank())
+            assertTrue("Audit title must not be blank for $lang", strings.todayPhysicsAuditTitle.isNotBlank())
+            assertTrue("Contract formula detail must not be blank for $lang", strings.contractFormulaDetail.isNotBlank())
+            assertTrue("ToU summary detail must not be blank for $lang", strings.touSummaryDetail.isNotBlank())
+            assertTrue("Flat rate note desc must not be blank for $lang", strings.flatRateNoteDesc.isNotBlank())
+            assertTrue("Setback scan message must not be blank for $lang", strings.scanningSetbackMsg.isNotBlank())
+            assertTrue("Modulation calibration message must not be blank for $lang", strings.modCalibratedMsg.isNotBlank())
+        }
+
+        // Verify language-specific keywords
+        val enStrings = de.breast.ui.BreastI18n.get(de.breast.auth.AppLanguage.EN)
+        val deStrings = de.breast.ui.BreastI18n.get(de.breast.auth.AppLanguage.DE)
+        val zhStrings = de.breast.ui.BreastI18n.get(de.breast.auth.AppLanguage.ZH)
+
+        assertEquals("Settings", enStrings.settingsTitle)
+        assertEquals("Einstellungen", deStrings.settingsTitle)
+        assertEquals("系统设置", zhStrings.settingsTitle)
+
+        assertEquals("Refresh Telemetry", enStrings.refreshTelemetryBtn)
+        assertEquals("Telemetrie aktualisieren", deStrings.refreshTelemetryBtn)
+        assertEquals("刷新遥测数据", zhStrings.refreshTelemetryBtn)
+
+        assertEquals("Smart Heat Pump", enStrings.defaultHeatPumpName)
+        assertEquals("Smarte Wärmepumpe", deStrings.defaultHeatPumpName)
+        assertEquals("智能热泵", zhStrings.defaultHeatPumpName)
+
+        assertEquals("Close", enStrings.close)
+        assertEquals("Schließen", deStrings.close)
+        assertEquals("关闭", zhStrings.close)
+
+        // Telemetry descriptions & keys
+        assertEquals(" (+0 K Base)", enStrings.telemetryShiftBase)
+        assertEquals(" (+0 K Basis)", deStrings.telemetryShiftBase)
+        assertEquals(" (+0 K 基准)", zhStrings.telemetryShiftBase)
+
+        // Cascade Priority
+        assertEquals("Priority Cascade:\n", enStrings.cascadePriorityTitle)
+        assertEquals("Prioritäts-Kaskade:\n", deStrings.cascadePriorityTitle)
+        assertEquals("数据源优先级级联:\n", zhStrings.cascadePriorityTitle)
+
+        // Weather Diagnostics
+        assertTrue(deStrings.weatherOfflineMsg.contains("Wetterdienst offline"))
+        assertTrue(zhStrings.weatherOfflineMsg.contains("气象接口离线"))
+
+        // Setback & Modulation Analysis
+        assertEquals("Heat Loss Rate", enStrings.chipHeatLossRate)
+        assertEquals("Wärmeverlustrate", deStrings.chipHeatLossRate)
+        assertEquals("散热损耗速率", zhStrings.chipHeatLossRate)
+
+        assertEquals("Baseline Mod", enStrings.chipBaselineMod)
+        assertEquals("Basis-Modulation", deStrings.chipBaselineMod)
+        assertEquals("基准调制率", zhStrings.chipBaselineMod)
+    }
+
+    @Test
+    fun `BreastI18n helper methods dynamically translate physics audit, plan summaries, and curve summaries`() {
+        val samplePlan = "02:00 – 06:00 (4.0 h) • Standard Window\nAvg 24.5 ct/kWh gross • Est. 1.85 € win (2.50 € 24h) (5.2 kWh win • 7.1 kWh 24h @ ~35% mod) • Target 21.0 °C\nTranslated Switch Points:\n  ► 02:00  comfort2 @ 21.0°C (HEATING ON)  •  DHW low @ 42°C\n  ► 06:00  setback @ 17.0°C (SETBACK)  •  DHW off"
+
+        val dePlan = de.breast.ui.BreastI18n.localizePlanSummary(samplePlan, de.breast.auth.AppLanguage.DE)
+        assertTrue("DE plan must translate Standard Window", dePlan.contains("Standard-Zeitfenster"))
+        assertTrue("DE plan must translate Translated Switch Points", dePlan.contains("Schaltpunkte Reglerprogramm:"))
+        assertTrue("DE plan must translate HEATING ON", dePlan.contains("(HEIZEN AN)"))
+        assertTrue("DE plan must translate SETBACK", dePlan.contains("(ABSENKUNG)"))
+        assertTrue("DE plan must translate DHW low", dePlan.contains("Warmwasser 42°C"))
+        assertTrue("DE plan must translate DHW off", dePlan.contains("Warmwasser Aus"))
+
+        val zhPlan = de.breast.ui.BreastI18n.localizePlanSummary(samplePlan, de.breast.auth.AppLanguage.ZH)
+        assertTrue("ZH plan must translate Standard Window", zhPlan.contains("标准窗口"))
+        assertTrue("ZH plan must translate Translated Switch Points", zhPlan.contains("下发至热泵的定时开关点:"))
+        assertTrue("ZH plan must translate HEATING ON", zhPlan.contains("(采暖开启)"))
+        assertTrue("ZH plan must translate SETBACK", zhPlan.contains("(夜间回落)"))
+        assertTrue("ZH plan must translate DHW low", zhPlan.contains("生活热水 42°C"))
+        assertTrue("ZH plan must translate DHW off", zhPlan.contains("生活热水 关闭"))
+
+        val sampleAudit = "1. Weather Conditions (DWD ICON Forecast):\n   • 24h Average Outdoor Temp: 5.2°C (Min 2.0°C, Max 8.0°C)\n2. Thermal Demand (2R2C Coupled State-Space):\n   • Building Loss Coeff (Hbld): 0.180 kW/K (Calibrated baseline)\n3. Inverter Modulation & Thermodynamics:\n   • Target Flow Temp: 32.5°C (Carnot Lift: 27.3 K)\n4. Tariff & Cost:\n   • Active Window Operating Cost: 1.85 €\n5. Dynamic Runtime Corridor (Harmonized Quantizer):\n   • Preference Mode: Comfort (+25% expansion allowance)"
+
+        val deAudit = de.breast.ui.BreastI18n.localizePhysicsAudit(sampleAudit, de.breast.auth.AppLanguage.DE)
+        assertTrue("DE audit must translate Weather Conditions", deAudit.contains("1. Wetterbedingungen (DWD ICON Vorhersage):"))
+        assertTrue("DE audit must translate Thermal Demand", deAudit.contains("2. Wärmebedarf (2R2C gekoppeltes Zustandsraummodell):"))
+        assertTrue("DE audit must translate Thermodynamics", deAudit.contains("3. Inverter-Modulation & Thermodynamik:"))
+        assertTrue("DE audit must translate Tariff & Cost", deAudit.contains("4. Stromtarif & Kosten:"))
+        assertTrue("DE audit must translate Runtime Corridor", deAudit.contains("5. Dynamischer Laufzeitkorridor (Harmonisierter Quantisierer):"))
+        assertTrue("DE audit must translate Comfort", deAudit.contains("Komfort"))
+
+        val zhAudit = de.breast.ui.BreastI18n.localizePhysicsAudit(sampleAudit, de.breast.auth.AppLanguage.ZH)
+        assertTrue("ZH audit must translate Weather Conditions", zhAudit.contains("1. 气象条件 (德国气象局 DWD ICON 预报):"))
+        assertTrue("ZH audit must translate Thermal Demand", zhAudit.contains("2. 需热量解算 (2R2C 状态空间耦合模型):"))
+        assertTrue("ZH audit must translate Thermodynamics", zhAudit.contains("3. 变频调制与热力学状态:"))
+        assertTrue("ZH audit must translate Tariff & Cost", zhAudit.contains("4. 电价资费与成本明细:"))
+        assertTrue("ZH audit must translate Runtime Corridor", zhAudit.contains("5. 动态运行时长走廊 (阶梯量化器):"))
+        assertTrue("ZH audit must translate Comfort", zhAudit.contains("舒适优先"))
+
+        val sampleCurve = "Optimal Bosch underfloor curve (Slope 0.45, Flow @0°C: 31.0°C). Very good heat pump efficiency."
+        val deCurve = de.breast.ui.BreastI18n.localizeCurveSummary(sampleCurve, de.breast.auth.AppLanguage.DE)
+        assertTrue("DE curve summary translated", deCurve.contains("Optimale Bosch Fußboden-Heizkurve"))
+        val zhCurve = de.breast.ui.BreastI18n.localizeCurveSummary(sampleCurve, de.breast.auth.AppLanguage.ZH)
+        assertTrue("ZH curve summary translated", zhCurve.contains("博世地暖标准最优曲线"))
+    }
+
+    @Test
+    fun `SettingsAnalysisPresenter buildSetbackUiModel executes cleanly across EN, DE, and ZH without formatting crashes`() {
+        val mockResultWithPrior = de.breast.telemetry.SetbackEstimationResult(
+            sampleCount = 45,
+            durationHours = 3.5,
+            coolingRateKPerHour = 0.22,
+            avgOutdoorTempC = 2.4,
+            avgIndoorTempC = 21.0,
+            estimatedLossKwPerK = 0.135,
+            estimatedLossWPerK = 135,
+            timestampStartIso = "2026-10-28T22:00:00Z",
+            timestampEndIso = "2026-10-29T01:30:00Z",
+            rSquared = 0.94,
+            temperatureDropK = 0.77,
+            blockCount = 2,
+            weightedLossWPerK = 142,
+            effectiveCapacityKwhPerK = 6.4,
+            historicalPriorIncorporated = true,
+            historicalPriorWeight = 25000.0
+        )
+
+        val mockResultWithoutPrior = de.breast.telemetry.SetbackEstimationResult(
+            sampleCount = 20,
+            durationHours = 2.0,
+            coolingRateKPerHour = 0.15,
+            avgOutdoorTempC = 5.0,
+            avgIndoorTempC = 21.5,
+            estimatedLossKwPerK = 0.120,
+            estimatedLossWPerK = 120,
+            timestampStartIso = "2026-10-28T23:00:00Z",
+            timestampEndIso = "2026-10-29T01:00:00Z",
+            rSquared = 0.88,
+            temperatureDropK = 0.30,
+            blockCount = 1,
+            weightedLossWPerK = null,
+            effectiveCapacityKwhPerK = 5.0,
+            historicalPriorIncorporated = false,
+            historicalPriorWeight = 0.0
+        )
+
+        for (lang in de.breast.auth.AppLanguage.entries) {
+            val i18n = de.breast.ui.BreastI18n.get(lang)
+
+            // Test 1: Prior active
+            val modelWithPrior = de.breast.ui.SettingsAnalysisPresenter.buildSetbackUiModel(
+                result = mockResultWithPrior,
+                historicalPriorLoss = 145,
+                historicalWeight = 25000.0,
+                i18n = i18n
+            )
+            assertNotNull("Model with prior must not be null for $lang", modelWithPrior)
+            assertEquals(142, modelWithPrior!!.chosenLossInt)
+            assertTrue("Status text populated", modelWithPrior.statusText.isNotBlank())
+            assertEquals(4, modelWithPrior.badges.size)
+            assertTrue("Anchor badge present", modelWithPrior.badges.any { it.label == i18n.anchorActiveBadge })
+            assertEquals(i18n.chipHeatLossRate, modelWithPrior.chip1.title)
+            assertEquals("142 W/K", modelWithPrior.chip1.value)
+            assertEquals(5, modelWithPrior.nuanceItems.size)
+            assertTrue("Apply button text contains loss", modelWithPrior.applyButtonText.contains("142"))
+
+            // Test 2: Prior inactive
+            val modelWithoutPrior = de.breast.ui.SettingsAnalysisPresenter.buildSetbackUiModel(
+                result = mockResultWithoutPrior,
+                historicalPriorLoss = 145,
+                historicalWeight = 0.0,
+                i18n = i18n
+            )
+            assertNotNull("Model without prior must not be null for $lang", modelWithoutPrior)
+            assertEquals(120, modelWithoutPrior!!.chosenLossInt)
+            assertFalse("Anchor badge absent", modelWithoutPrior.badges.any { it.label == i18n.anchorActiveBadge })
+            assertTrue("Apply button text contains loss", modelWithoutPrior.applyButtonText.contains("120"))
+
+            // Test 3: Null result
+            val nullModel = de.breast.ui.SettingsAnalysisPresenter.buildSetbackUiModel(
+                result = null,
+                historicalPriorLoss = 145,
+                historicalWeight = 0.0,
+                i18n = i18n
+            )
+            assertNull(nullModel)
+        }
+    }
+
+    @Test
+    fun `SettingsAnalysisPresenter buildModulationUiModel executes cleanly across EN, DE, and ZH without formatting crashes`() {
+        val mockProfileWithPrior = de.breast.telemetry.EmpiricalModulationProfile(
+            totalHeatingSamples = 520,
+            steadyStateSamples = 410,
+            detectedRunsCount = 14,
+            avgSteadyModulationPct = 38.5,
+            avgSteadyOutdoorTempC = 4.2,
+            avgSteadyDeltaTC = 4.8,
+            inferredSteadyPowerKw = 1.45,
+            warmupModulationOverheadFactor = 1.18,
+            modulationAt10C = 32.4,
+            modulationSlopePerK = 1.65,
+            minObservedModulationPct = 28.0,
+            maxObservedModulationPct = 72.0,
+            evaluationSummary = "Calibrated profile",
+            matchedSetpointTempC = 21.5,
+            rSquared = 0.93,
+            minObservedOutdoorTempC = -2.1,
+            maxObservedOutdoorTempC = 11.4,
+            avgWarmupModulationPct = 52.0,
+            warmupSamplesCount = 42,
+            historicalPriorIncorporated = true,
+            historicalPriorWeight = 25000.0
+        )
+
+        for (lang in de.breast.auth.AppLanguage.entries) {
+            val i18n = de.breast.ui.BreastI18n.get(lang)
+
+            // Test 1: Full profile with historical prior
+            val model = de.breast.ui.SettingsAnalysisPresenter.buildModulationUiModel(
+                profile = mockProfileWithPrior,
+                targetTemp = 21.5,
+                historicalModAt10C = 30.0,
+                historicalWeight = 25000,
+                i18n = i18n
+            )
+            assertNotNull("Modulation model must not be null for $lang", model)
+            assertTrue(model!!.statusText.isNotBlank())
+            assertEquals(4, model.badges.size)
+            assertTrue("Anchor badge present", model.badges.any { it.label == i18n.anchorActiveBadge })
+            assertEquals(i18n.chipBaselineMod, model.chip1.title)
+            assertEquals("32.4% @ 10°C", model.chip1.value)
+            assertEquals(4, model.nuanceItems.size)
+            assertTrue("Nuance box title non-blank", model.nuanceTitle.isNotBlank())
+            assertTrue("Projections table generated", model.projections.isNotEmpty())
+            assertTrue("Apply button text non-blank", model.applyButtonText.contains("32.4"))
+
+            // Test 2: Null profile
+            val nullModel = de.breast.ui.SettingsAnalysisPresenter.buildModulationUiModel(
+                profile = null,
+                targetTemp = 21.5,
+                historicalModAt10C = 30.0,
+                historicalWeight = 25000,
+                i18n = i18n
+            )
+            assertNull(nullModel)
+        }
+    }
+
+    @Test
+    fun `SettingsAnalysisPresenter executeSafeClearDatabase in dev mode safely copies and deletes copy while preserving real database`() {
+        val tempDir = java.nio.file.Files.createTempDirectory("breast_test_db").toFile()
+        try {
+            val originalDb = java.io.File(tempDir, "breast_telemetry.db")
+            originalDb.writeText("CRITICAL_USER_TELEMETRY_DATA_SNAPSHOT_12345")
+            val cacheDir = java.io.File(tempDir, "cache")
+            cacheDir.mkdirs()
+
+            var productionClearCalled = false
+
+            // Action: In Dev Mode (isDevMode = true)
+            val result = de.breast.ui.SettingsAnalysisPresenter.executeSafeClearDatabase(
+                isDevMode = true,
+                originalDbFile = originalDb,
+                cacheDir = cacheDir,
+                onClearOriginalDb = { productionClearCalled = true }
+            )
+
+            // Assertions
+            assertTrue("Dev mode reported in result", result.isDevMode)
+            assertTrue("Copy was created during verification", result.copyCreated)
+            assertTrue("Copy was deleted during cleanup", result.copyDeleted)
+            assertTrue("Operation marked successful", result.success)
+            assertFalse("Production clear MUST NOT be called in dev mode", productionClearCalled)
+            assertTrue("Original database file MUST still exist", originalDb.exists())
+            assertEquals(
+                "Original database content MUST NOT be modified or cleared",
+                "CRITICAL_USER_TELEMETRY_DATA_SNAPSHOT_12345",
+                originalDb.readText()
+            )
+
+            // Action: In Production Mode (isDevMode = false)
+            val prodResult = de.breast.ui.SettingsAnalysisPresenter.executeSafeClearDatabase(
+                isDevMode = false,
+                originalDbFile = originalDb,
+                cacheDir = cacheDir,
+                onClearOriginalDb = { productionClearCalled = true; originalDb.delete() }
+            )
+            assertFalse("Production mode reported", prodResult.isDevMode)
+            assertTrue("Production clear was invoked", productionClearCalled)
+            assertFalse("Original database was wiped by onClearOriginalDb", originalDb.exists())
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `KeystoreSecretStore encrypt and decrypt round trip preserves secret string`() {
+        val sampleSecret = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.sensitive_payload_token_98765"
+        val encrypted = de.breast.auth.KeystoreSecretStore.encrypt(sampleSecret)
+
+        assertNotNull("Encryption should produce non-null ciphertext", encrypted)
+        assertFalse("Ciphertext must not equal plaintext", encrypted == sampleSecret)
+        assertFalse("Ciphertext must not contain sensitive token content", encrypted!!.contains("sensitive_payload_token"))
+
+        val decrypted = de.breast.auth.KeystoreSecretStore.decrypt(encrypted)
+        assertNotNull("Decryption must succeed", decrypted)
+        assertEquals("Decrypted plaintext must match original exactly", sampleSecret, decrypted)
+    }
+
+    @Test
+    fun `KeystoreSecretStore decrypt handles invalid or corrupted ciphertext safely`() {
+        assertNull("Empty string returns null", de.breast.auth.KeystoreSecretStore.decrypt(""))
+        assertNull("Truncated bytes return null", de.breast.auth.KeystoreSecretStore.decrypt("AAAA"))
+        assertNull("Garbage base64 returns null", de.breast.auth.KeystoreSecretStore.decrypt("bm90X2FfZm9ybWF0dGVkX2NpcGhlcnRleHQ="))
     }
 }

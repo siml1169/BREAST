@@ -53,10 +53,138 @@ data class VattenfallTariffConfig(
     }
 }
 
+@Serializable
+enum class TariffPricingModel(val id: String, val displayName: String) {
+    DYNAMIC_SPOT("dynamic_spot", "Dynamic EPEX Spot (Day-Ahead)"),
+    TIME_OF_USE("time_of_use", "Peak / Off-Peak (ToU HT/NT)"),
+    FLAT_RATE("flat_rate", "Flat Rate (Festpreis)");
+
+    companion object {
+        fun fromId(id: String?): TariffPricingModel =
+            entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: DYNAMIC_SPOT
+    }
+}
+
+@Serializable
+data class TimeOfUseTimetable(
+    val peakPriceGrossCtPerKwh: Double = 38.0,
+    val offPeakPriceGrossCtPerKwh: Double = 24.0,
+    val offPeakStartHour: Int = 22, // 22:00
+    val offPeakEndHour: Int = 6,    // 06:00
+    val weekendAllOffPeak: Boolean = true
+) {
+    fun isOffPeak(zonedDateTime: java.time.ZonedDateTime): Boolean {
+        val dayOfWeek = zonedDateTime.dayOfWeek
+        if (weekendAllOffPeak && (dayOfWeek == java.time.DayOfWeek.SATURDAY || dayOfWeek == java.time.DayOfWeek.SUNDAY)) {
+            return true
+        }
+        val hour = zonedDateTime.hour
+        return if (offPeakStartHour > offPeakEndHour) {
+            // e.g. 22:00 to 06:00 -> [22, 23] or [0..5]
+            hour >= offPeakStartHour || hour < offPeakEndHour
+        } else if (offPeakStartHour < offPeakEndHour) {
+            // e.g. 01:00 to 06:00 -> [1..5]
+            hour in offPeakStartHour until offPeakEndHour
+        } else {
+            // start == end -> 24h all off-peak
+            true
+        }
+    }
+
+    fun getGrossPrice(zonedDateTime: java.time.ZonedDateTime): Double {
+        return if (isOffPeak(zonedDateTime)) offPeakPriceGrossCtPerKwh else peakPriceGrossCtPerKwh
+    }
+}
+
+@Serializable
+data class ElectricityTariffConfig(
+    val pricingModel: TariffPricingModel = TariffPricingModel.DYNAMIC_SPOT,
+    val vatRate: Double = 0.19, // 19%
+    val netSurchargeCtPerKwh: Double = 21.3446, // Base working price surcharge (Netzentgelte, Steuern, Umlagen & Vertrieb)
+    val supplierMarginNetCtPerKwh: Double = 0.0, // Folded into netSurchargeCtPerKwh
+    val regionalSurchargeGrossCtPerKwh: Double? = null,
+    val baseFeeMonthlyGross: Double = 13.80,
+    val priceCapGrossCtPerKwh: Double? = null,
+    val touTimetable: TimeOfUseTimetable = TimeOfUseTimetable(),
+    val flatPriceGrossCtPerKwh: Double = 32.0
+) {
+    val totalNetSurchargeCtPerKwh: Double
+        get() = netSurchargeCtPerKwh + supplierMarginNetCtPerKwh
+
+    val baseFloorGrossCtPerKwh: Double
+        get() = regionalSurchargeGrossCtPerKwh ?: (totalNetSurchargeCtPerKwh * (1.0 + vatRate))
+
+    fun computeGrossCtPerKwh(spotEurPerMwh: Double): Double {
+        val spotNetCt = spotEurPerMwh / 10.0
+        val rawGross = if (regionalSurchargeGrossCtPerKwh != null) {
+            (spotNetCt + supplierMarginNetCtPerKwh) * (1.0 + vatRate) + regionalSurchargeGrossCtPerKwh
+        } else {
+            (spotNetCt + totalNetSurchargeCtPerKwh) * (1.0 + vatRate)
+        }
+        return if (priceCapGrossCtPerKwh != null) minOf(rawGross, priceCapGrossCtPerKwh) else rawGross
+    }
+
+    fun toVattenfallTariffConfig(): VattenfallTariffConfig {
+        return VattenfallTariffConfig(
+            vatRate = vatRate,
+            netSurchargeCtPerKwh = totalNetSurchargeCtPerKwh,
+            regionalSurchargeGrossCtPerKwh = regionalSurchargeGrossCtPerKwh,
+            baseFeeMonthlyGross = baseFeeMonthlyGross,
+            priceCapGrossCtPerKwh = priceCapGrossCtPerKwh
+        )
+    }
+
+    fun generateSyntheticSlots(
+        startDate: LocalDate,
+        endDate: LocalDate,
+        zoneId: ZoneId = SpotPriceClient.BERLIN_ZONE
+    ): List<SpotPriceSlot> {
+        val slots = mutableListOf<SpotPriceSlot>()
+        var curDate = startDate
+        while (!curDate.isAfter(endDate)) {
+            val dayStart = curDate.atStartOfDay(zoneId)
+            for (step in 0 until 96) {
+                val slotStart = dayStart.plusMinutes(step * 15L)
+                val slotEnd = slotStart.plusMinutes(15L)
+                val grossCt = when (pricingModel) {
+                    TariffPricingModel.TIME_OF_USE -> touTimetable.getGrossPrice(slotStart)
+                    TariffPricingModel.FLAT_RATE -> flatPriceGrossCtPerKwh
+                    TariffPricingModel.DYNAMIC_SPOT -> computeGrossCtPerKwh(0.0)
+                }
+                val netTotal = if (vatRate > -1.0) grossCt / (1.0 + vatRate) else grossCt
+                val spotNet = (netTotal - totalNetSurchargeCtPerKwh).coerceAtLeast(0.0)
+                slots.add(
+                    SpotPriceSlot(
+                        startEpochSeconds = slotStart.toInstant().epochSecond,
+                        endEpochSeconds = slotEnd.toInstant().epochSecond,
+                        spotEurPerMwh = spotNet * 10.0,
+                        spotNetCtPerKwh = spotNet,
+                        totalGrossCtPerKwh = grossCt
+                    )
+                )
+            }
+            curDate = curDate.plusDays(1)
+        }
+        return slots
+    }
+}
+
 open class SpotPriceClient(
     private val httpClient: OkHttpClient,
-    private val tariffConfig: VattenfallTariffConfig = VattenfallTariffConfig()
+    val tariffConfig: ElectricityTariffConfig = ElectricityTariffConfig()
 ) {
+    constructor(httpClient: OkHttpClient, vatConfig: VattenfallTariffConfig) : this(
+        httpClient,
+        ElectricityTariffConfig(
+            pricingModel = TariffPricingModel.DYNAMIC_SPOT,
+            vatRate = vatConfig.vatRate,
+            netSurchargeCtPerKwh = vatConfig.netSurchargeCtPerKwh,
+            supplierMarginNetCtPerKwh = 0.0,
+            regionalSurchargeGrossCtPerKwh = vatConfig.regionalSurchargeGrossCtPerKwh,
+            baseFeeMonthlyGross = vatConfig.baseFeeMonthlyGross,
+            priceCapGrossCtPerKwh = vatConfig.priceCapGrossCtPerKwh
+        )
+    )
     private val json = Json { ignoreUnknownKeys = true }
 
     companion object {
@@ -92,6 +220,10 @@ open class SpotPriceClient(
         endDate: LocalDate = startDate.plusDays(1),
         sources: List<SpotPriceSource> = SpotPriceSource.ALL
     ): List<SpotPriceSlot> = withContext(Dispatchers.IO) {
+        if (tariffConfig.pricingModel != TariffPricingModel.DYNAMIC_SPOT) {
+            return@withContext tariffConfig.generateSyntheticSlots(startDate, endDate, BERLIN_ZONE)
+        }
+
         val activeSources = sources.ifEmpty { listOf(SpotPriceSource.VATTENFALL) }
 
         var bestTodaySlots: List<SpotPriceSlot> = emptyList()

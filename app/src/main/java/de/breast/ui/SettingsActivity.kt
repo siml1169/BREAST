@@ -12,12 +12,21 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.Editable
+import android.text.InputType
+import android.text.TextUtils
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowInsetsController
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -25,13 +34,18 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import de.breast.auth.UserSettingsStore
 import de.breast.daemon.BreastNotificationHelper
 import de.breast.daemon.SpotScheduleJobService
 import de.breast.optimizer.OptimizationPreference
+import de.breast.spot.ElectricityTariffConfig
 import de.breast.spot.SpotPriceClient
 import de.breast.spot.SpotPriceSource
+import de.breast.spot.TariffPricingModel
+import de.breast.spot.TimeOfUseTimetable
 import de.breast.telemetry.SetbackHeatLossEstimator
 import de.breast.telemetry.SqliteTelemetryStore
 import de.breast.weather.WeatherForecastClient
@@ -64,14 +78,16 @@ class SettingsActivity : ComponentActivity() {
         val secondaryBtnStroke: String,
         val secondaryBtnText: String,
         val badgeBg: String,
-        val badgeStroke: String
+        val badgeStroke: String,
+        val inputBg: String,
+        val inputStroke: String
     )
 
     private lateinit var palette: UiPalette
     private lateinit var settingsStore: UserSettingsStore
     private lateinit var telemetryStore: SqliteTelemetryStore
     private val httpClient = OkHttpClient()
-    private val spotClient = SpotPriceClient(httpClient)
+    private val spotClient get() = SpotPriceClient(httpClient, settingsStore.buildTariffConfig())
     private val weatherClient by lazy {
         WeatherForecastClient(
             httpClient = httpClient,
@@ -88,6 +104,7 @@ class SettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
         settingsStore = UserSettingsStore(this)
         telemetryStore = SqliteTelemetryStore(this)
 
@@ -124,7 +141,9 @@ class SettingsActivity : ComponentActivity() {
                 secondaryBtnStroke = "#475569",
                 secondaryBtnText = "#E2E8F0",
                 badgeBg = "#0F172A",
-                badgeStroke = "#334155"
+                badgeStroke = "#334155",
+                inputBg = "#0F172A",
+                inputStroke = "#334155"
             )
         } else {
             UiPalette(
@@ -147,9 +166,25 @@ class SettingsActivity : ComponentActivity() {
                 secondaryBtnStroke = "#CBD5E1",
                 secondaryBtnText = "#1E293B",
                 badgeBg = "#F1F5F9",
-                badgeStroke = "#CBD5E1"
+                badgeStroke = "#CBD5E1",
+                inputBg = "#F8FAFC",
+                inputStroke = "#CBD5E1"
             )
         }
+    }
+
+    private fun UiPalette.toAnalysisPalette(): AnalysisPalette {
+        return AnalysisPalette(
+            accentGreen = accentGreen,
+            accentGreenBg = accentGreenBg,
+            accentGreenStroke = accentGreenStroke,
+            accentBlue = accentBlue,
+            accentBlueBg = accentBlueBg,
+            accentBlueStroke = accentBlueStroke,
+            badgeBg = badgeBg,
+            badgeStroke = badgeStroke,
+            textSecondary = textSecondary
+        )
     }
 
     private fun applySystemBarColors(dark: Boolean) {
@@ -189,7 +224,7 @@ class SettingsActivity : ComponentActivity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(palette.cardBg, palette.cardStroke, cornerDp = 16)
-            setPadding(dp(18), dp(18), dp(18), dp(18))
+            setPadding(dp(18), dp(18), dp(18), dp(22))
             val lp = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -231,6 +266,8 @@ class SettingsActivity : ComponentActivity() {
             setTypeface(typeface, Typeface.BOLD)
             background = roundedBg(bgHex, strokeHex, cornerDp = 10)
             setPadding(dp(14), dp(10), dp(14), dp(10))
+            stateListAnimator = null
+            elevation = 0f
         }
     }
 
@@ -299,8 +336,9 @@ class SettingsActivity : ComponentActivity() {
             lp.setMargins(0, dp(6), 0, dp(8))
             layoutParams = lp
 
+            val i18n = BreastI18n.get(settingsStore.appLanguage)
             addView(TextView(this@SettingsActivity).apply {
-                text = "Dynamic Temperature Operating Corridor"
+                text = i18n.projectionTableTitle
                 setTextColor(Color.parseColor(palette.accentBlue))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTypeface(typeface, Typeface.BOLD)
@@ -315,14 +353,14 @@ class SettingsActivity : ComponentActivity() {
                     layoutParams = rLp
 
                     addView(TextView(this@SettingsActivity).apply {
-                        text = proj.scenarioLabel
+                        text = BreastI18n.localizeScenarioLabel(proj.scenarioLabel, settingsStore.appLanguage)
                         setTextColor(Color.parseColor(palette.textPrimary))
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.3f)
                     })
 
                     val modStr = String.format(java.util.Locale.US, "%.1f%%", proj.predictedModulationPct) +
-                        if (proj.isHardwareClamped) " (Floor)" else ""
+                        if (proj.isHardwareClamped) " ${i18n.projectionFloorBadge}" else ""
                     addView(TextView(this@SettingsActivity).apply {
                         text = modStr
                         setTextColor(Color.parseColor(if (proj.isHardwareClamped) palette.accentAmber else palette.accentGreen))
@@ -348,11 +386,21 @@ class SettingsActivity : ComponentActivity() {
 
     private fun buildContentView(): View {
         val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = true
             setBackgroundColor(Color.parseColor(palette.pageBg))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+        }
+
+        // Apply window insets for system bars (status bar, display cutout, nav bar) and soft keyboard (IME)
+        ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            insets
         }
 
         val root = LinearLayout(this).apply {
@@ -369,8 +417,10 @@ class SettingsActivity : ComponentActivity() {
             setPadding(0, 0, 0, dp(16))
         }
 
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
+
         val backBtn = createStyledButton(
-            label = "← Done",
+            label = i18n.done,
             bgHex = palette.secondaryBtnBg,
             strokeHex = palette.secondaryBtnStroke,
             textHex = palette.accentBlue
@@ -380,7 +430,7 @@ class SettingsActivity : ComponentActivity() {
         topBar.addView(backBtn)
 
         val titleView = TextView(this).apply {
-            text = "Settings"
+            text = i18n.settingsTitle
             setTextColor(Color.parseColor(palette.textPrimary))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             setTypeface(typeface, Typeface.BOLD)
@@ -390,11 +440,89 @@ class SettingsActivity : ComponentActivity() {
         root.addView(topBar)
 
         // =========================================================================
-        // 1. SPOT MARKET DATA SOURCES (MULTIPLE SOURCES + PRIMARY WITH FALLBACK)
+        // 0. LANGUAGE SELECTION CARD
+        // =========================================================================
+        val langCard = createCard().apply {
+            addView(cardSectionTitle(i18n.languageSectionTitle))
+            addView(cardSubtitle(i18n.languageSectionSubtitle))
+
+            val langBtnRow = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
+            }
+
+            fun selectLanguage(lang: de.breast.auth.AppLanguage) {
+                if (settingsStore.appLanguage != lang) {
+                    settingsStore.appLanguage = lang
+                    setContentView(buildContentView())
+                }
+            }
+
+            val curLang = settingsStore.appLanguage
+
+            val enBtn = createStyledButton(
+                label = "English",
+                bgHex = if (curLang == de.breast.auth.AppLanguage.EN) palette.accentBlueBg else palette.secondaryBtnBg,
+                strokeHex = if (curLang == de.breast.auth.AppLanguage.EN) palette.accentBlueStroke else palette.secondaryBtnStroke,
+                textHex = if (curLang == de.breast.auth.AppLanguage.EN) palette.accentBlue else palette.secondaryBtnText
+            ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    rightMargin = dp(4)
+                }
+                setOnClickListener { selectLanguage(de.breast.auth.AppLanguage.EN) }
+            }
+            langBtnRow.addView(enBtn)
+
+            val deBtn = createStyledButton(
+                label = "Deutsch",
+                bgHex = if (curLang == de.breast.auth.AppLanguage.DE) palette.accentBlueBg else palette.secondaryBtnBg,
+                strokeHex = if (curLang == de.breast.auth.AppLanguage.DE) palette.accentBlueStroke else palette.secondaryBtnStroke,
+                textHex = if (curLang == de.breast.auth.AppLanguage.DE) palette.accentBlue else palette.secondaryBtnText
+            ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    leftMargin = dp(2)
+                    rightMargin = dp(2)
+                }
+                setOnClickListener { selectLanguage(de.breast.auth.AppLanguage.DE) }
+            }
+            langBtnRow.addView(deBtn)
+
+            val zhBtn = createStyledButton(
+                label = "中文",
+                bgHex = if (curLang == de.breast.auth.AppLanguage.ZH) palette.accentBlueBg else palette.secondaryBtnBg,
+                strokeHex = if (curLang == de.breast.auth.AppLanguage.ZH) palette.accentBlueStroke else palette.secondaryBtnStroke,
+                textHex = if (curLang == de.breast.auth.AppLanguage.ZH) palette.accentBlue else palette.secondaryBtnText
+            ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    leftMargin = dp(4)
+                }
+                setOnClickListener { selectLanguage(de.breast.auth.AppLanguage.ZH) }
+            }
+            langBtnRow.addView(zhBtn)
+
+            addView(langBtnRow)
+        }
+        root.addView(langCard)
+
+        // =========================================================================
+        // 1. ELECTRICITY TARIFF COMPOSITOR & PRICING MODELS
+        // =========================================================================
+        val tariffCard = buildTariffCompositorCard()
+        root.addView(tariffCard)
+
+        // =========================================================================
+        // 2. SPOT MARKET DATA SOURCES (MULTIPLE SOURCES + PRIMARY WITH FALLBACK)
         // =========================================================================
         val sourcesCard = createCard().apply {
-            addView(cardSectionTitle("⚡ Spot Market Price Sources"))
-            addView(cardSubtitle("Choose active exchange data providers and designate primary source. If the primary source is unavailable or delayed, automatic fallback triggers."))
+            addView(cardSectionTitle(i18n.sourcesSectionTitle))
+            addView(cardSubtitle(i18n.sourcesSectionSubtitle))
 
             // Fallback Cascade Banner
             val cascadeBanner = LinearLayout(this@SettingsActivity).apply {
@@ -422,7 +550,7 @@ class SettingsActivity : ComponentActivity() {
 
             // Test Price Sources Button
             val testBtn = createStyledButton(
-                label = "Test Price Sources Now",
+                label = i18n.testSourcesBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentBlue
@@ -430,7 +558,10 @@ class SettingsActivity : ComponentActivity() {
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(10) }
+                ).apply {
+                    topMargin = dp(10)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
                 setOnClickListener { runPriceSourceDiagnostics() }
             }
@@ -442,11 +573,11 @@ class SettingsActivity : ComponentActivity() {
         // 2. LIVE TELEMETRY & REAL HEATING CURVE RECORDING
         // =========================================================================
         val telemetryCard = createCard().apply {
-            addView(cardSectionTitle("📈 Live Telemetry & Heating Curve"))
-            addView(cardSubtitle("Record heat pump outdoor, supply, return temperatures and modulation into SQLite database to empirically learn building thermal properties."))
+            addView(cardSectionTitle(i18n.telemetryRecSectionTitle))
+            addView(cardSubtitle(i18n.telemetryRecSectionSubtitle))
 
             val recSwitch = Switch(this@SettingsActivity).apply {
-                text = "Record Telemetry in Background"
+                text = i18n.recordTelemetrySwitch
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 isChecked = settingsStore.telemetryCollectionEnabled
@@ -475,14 +606,14 @@ class SettingsActivity : ComponentActivity() {
                 setPadding(0, dp(8), 0, dp(2))
             }
             freqHeaderRow.addView(TextView(this@SettingsActivity).apply {
-                text = "Sampling Frequency"
+                text = i18n.samplingFreqLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             val freqBadge = TextView(this@SettingsActivity).apply {
                 val m = settingsStore.telemetryIntervalMinutes
-                text = if (m == 1) "Every 1 min" else if (m == 60) "Every 1 hour" else "Every $m min"
+                text = if (m == 1) i18n.freqEveryMinute else if (m == 60) i18n.freqEveryHour else String.format(i18n.freqEveryMinutes, m)
                 setTextColor(Color.parseColor(palette.accentBlue))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                 setTypeface(typeface, Typeface.BOLD)
@@ -499,7 +630,7 @@ class SettingsActivity : ComponentActivity() {
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                         val minutes = progress + 1
-                        freqBadge.text = if (minutes == 1) "Every 1 min" else if (minutes == 60) "Every 1 hour" else "Every $minutes min"
+                        freqBadge.text = if (minutes == 1) i18n.freqEveryMinute else if (minutes == 60) i18n.freqEveryHour else String.format(i18n.freqEveryMinutes, minutes)
                     }
 
                     override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -523,12 +654,15 @@ class SettingsActivity : ComponentActivity() {
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(10) }
+                ).apply {
+                    topMargin = dp(10)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
             }
 
             val exportBtn = createStyledButton(
-                label = "Export CSV",
+                label = i18n.exportCsvBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentGreen
@@ -541,7 +675,7 @@ class SettingsActivity : ComponentActivity() {
             actionsRow.addView(exportBtn)
 
             val clearBtn = createStyledButton(
-                label = "Clear Database",
+                label = i18n.clearDbBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentAmber
@@ -560,11 +694,11 @@ class SettingsActivity : ComponentActivity() {
         // 3. DEVELOPER / DEBUG MODE
         // =========================================================================
         val devCard = createCard().apply {
-            addView(cardSectionTitle("🛠️ Developer & Diagnostics"))
-            addView(cardSubtitle("Advanced diagnostic logging, API payload inspection, and test controls."))
+            addView(cardSectionTitle(i18n.devCardTitle))
+            addView(cardSubtitle(i18n.devCardSubtitle))
 
             val debugSwitch = Switch(this@SettingsActivity).apply {
-                text = "Developer / Debug Mode"
+                text = i18n.debugModeSwitch
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 isChecked = settingsStore.debugModeEnabled
@@ -578,7 +712,7 @@ class SettingsActivity : ComponentActivity() {
             addView(debugSwitch)
 
             val debugDesc = TextView(this@SettingsActivity).apply {
-                text = "When enabled, live single-key communication logs and telemetry JSON output are rendered in a monospace terminal card at the bottom of the main dashboard."
+                text = i18n.debugModeDesc
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setPadding(0, dp(2), 0, dp(10))
@@ -591,11 +725,11 @@ class SettingsActivity : ComponentActivity() {
         // 4. HOLISTIC MULTI-CRITERIA & THERMODYNAMIC OPTIMIZATION
         // =========================================================================
         val holisticCard = createCard().apply {
-            addView(cardSectionTitle("☀️ Holistic Thermodynamic & Energy Optimization"))
-            addView(cardSubtitle("Optimizes for delivered heat cost (c_elec / COP), captures the midday solar Carnot peak, and calculates dynamic daily thermal energy demand."))
+            addView(cardSectionTitle(i18n.holisticSectionTitle))
+            addView(cardSubtitle(i18n.holisticSectionSubtitle))
 
             val holisticSwitch = Switch(this@SettingsActivity).apply {
-                text = "Holistic Multi-Criteria Optimization"
+                text = i18n.holisticSwitchLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 isChecked = settingsStore.holisticOptimizationEnabled
@@ -609,7 +743,7 @@ class SettingsActivity : ComponentActivity() {
             addView(holisticSwitch)
 
             val holisticDesc = TextView(this@SettingsActivity).apply {
-                text = "Replaces rigid hour budgets with dynamic daily kWh demand. Runs during solar noon and 0-cent price windows where COP is highest."
+                text = i18n.holisticDesc
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setPadding(0, 0, 0, dp(8))
@@ -618,16 +752,25 @@ class SettingsActivity : ComponentActivity() {
 
             // Optimization Preference Segmented Control (Comfort, Budget, Efficiency, Balanced)
             addView(TextView(this@SettingsActivity).apply {
-                text = "Optimization Preference"
+                text = i18n.optPreferenceLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setTypeface(typeface, Typeface.BOLD)
                 setPadding(0, dp(6), 0, dp(2))
             })
 
+            fun getPrefSubtitle(pref: OptimizationPreference): String {
+                return when (pref) {
+                    OptimizationPreference.BALANCED -> i18n.prefBalancedSub
+                    OptimizationPreference.COMFORT -> i18n.prefComfortSub
+                    OptimizationPreference.BUDGET -> i18n.prefBudgetSub
+                    OptimizationPreference.EFFICIENCY -> i18n.prefEfficiencySub
+                }
+            }
+
             var currentPref = OptimizationPreference.fromId(settingsStore.optimizationPreference)
             val prefSubtitle = TextView(this@SettingsActivity).apply {
-                text = currentPref.subtitle
+                text = getPrefSubtitle(currentPref)
                 setTextColor(Color.parseColor(palette.accentAmber))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setPadding(0, 0, 0, dp(6))
@@ -635,6 +778,7 @@ class SettingsActivity : ComponentActivity() {
 
             val prefBtnRow = LinearLayout(this@SettingsActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
+                isBaselineAligned = false
                 setPadding(0, 0, 0, dp(8))
             }
 
@@ -642,14 +786,20 @@ class SettingsActivity : ComponentActivity() {
             for (p in OptimizationPreference.entries) {
                 val btn = Button(this@SettingsActivity).apply {
                     text = when (p) {
-                        OptimizationPreference.BALANCED -> "Balanced"
-                        OptimizationPreference.COMFORT -> "Comfort"
-                        OptimizationPreference.BUDGET -> "Budget"
-                        OptimizationPreference.EFFICIENCY -> "Efficiency"
+                        OptimizationPreference.BALANCED -> i18n.modeBalanced
+                        OptimizationPreference.COMFORT -> i18n.modeComfort
+                        OptimizationPreference.BUDGET -> i18n.modeBudget
+                        OptimizationPreference.EFFICIENCY -> i18n.modeEfficiency
                     }
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     isAllCaps = false
-                    setPadding(dp(4), dp(4), dp(4), dp(4))
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER
+                    stateListAnimator = null
+                    elevation = 0f
+                    minHeight = 0
+                    minimumHeight = 0
                     val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     lp.setMargins(dp(2), 0, dp(2), 0)
                     layoutParams = lp
@@ -661,7 +811,7 @@ class SettingsActivity : ComponentActivity() {
             fun updatePrefUi(selected: OptimizationPreference) {
                 currentPref = selected
                 settingsStore.optimizationPreference = selected.id
-                prefSubtitle.text = selected.subtitle
+                prefSubtitle.text = getPrefSubtitle(selected)
                 for ((p, btn) in prefButtons) {
                     if (p == selected) {
                         btn.background = roundedBg(palette.accentBlueBg, palette.accentBlueStroke, cornerDp = 8)
@@ -672,6 +822,7 @@ class SettingsActivity : ComponentActivity() {
                         btn.setTextColor(Color.parseColor(palette.textPrimary))
                         btn.setTypeface(null, Typeface.NORMAL)
                     }
+                    btn.setPadding(dp(2), dp(8), dp(2), dp(8))
                 }
             }
 
@@ -690,7 +841,7 @@ class SettingsActivity : ComponentActivity() {
                 setPadding(0, dp(6), 0, dp(2))
             }
             bufferHeaderRow.addView(TextView(this@SettingsActivity).apply {
-                text = "Screed Pre-Heat Buffering Limit"
+                text = i18n.screedBufferLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -734,7 +885,7 @@ class SettingsActivity : ComponentActivity() {
                 setPadding(0, dp(6), 0, dp(2))
             }
             lossHeaderRow.addView(TextView(this@SettingsActivity).apply {
-                text = "Building Heat Loss Estimate"
+                text = i18n.heatLossLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -780,7 +931,7 @@ class SettingsActivity : ComponentActivity() {
             }
 
             val setbackStatusText = TextView(this@SettingsActivity).apply {
-                text = "Auto-derive building heat loss from return temperature cooldown during night setback."
+                text = i18n.setbackStatusDefault
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setPadding(0, 0, 0, dp(4))
@@ -794,24 +945,40 @@ class SettingsActivity : ComponentActivity() {
             setbackCard.addView(setbackDetailsContainer)
 
             val applySetbackBtn = createStyledButton(
-                label = "Apply Measured Value to Slider",
+                label = String.format(i18n.applySetbackBtnFormat, 150),
                 bgHex = palette.accentGreenBg,
                 strokeHex = palette.accentGreenStroke,
                 textHex = palette.accentGreen
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 visibility = View.GONE
             }
 
             var lastMeasuredKw: Double? = null
 
             val analyzeSetbackBtn = createStyledButton(
-                label = "Analyze Night Setback Telemetry",
+                label = i18n.analyzeSetbackBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentBlue
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 setOnClickListener {
-                    setbackStatusText.text = "Scanning up to 25,000 telemetry points for nocturnal setback cooling (≥2h after sunset until sunrise)..."
+                    setbackStatusText.text = i18n.scanningSetbackMsg
                     setbackStatusText.setTextColor(Color.parseColor(palette.accentAmber))
                     setbackDetailsContainer.visibility = View.GONE
                     applySetbackBtn.visibility = View.GONE
@@ -830,40 +997,55 @@ class SettingsActivity : ComponentActivity() {
                         val priorWeight = settingsStore.historicalHeatLoss25kWeight
                         val result = estimator.estimateBuildingHeatLoss(snapshots, priorLoss, priorWeight)
                         withContext(Dispatchers.Main) {
-                            if (result != null) {
-                                val chosenLoss = result.weightedLossWPerK ?: result.estimatedLossWPerK
-                                lastMeasuredKw = chosenLoss / 1000.0
+                            val uiModel = SettingsAnalysisPresenter.buildSetbackUiModel(
+                                result = result,
+                                historicalPriorLoss = settingsStore.historicalHeatLoss25kWPerK,
+                                historicalWeight = settingsStore.historicalHeatLoss25kWeight,
+                                i18n = i18n,
+                                palette = palette.toAnalysisPalette()
+                            )
+                            if (uiModel != null) {
+                                lastMeasuredKw = uiModel.chosenLoss / 1000.0
 
-                                setbackStatusText.text = "✓ Nocturnal Setback Analysis Complete (25k Data Window)"
+                                setbackStatusText.text = uiModel.statusText
                                 setbackStatusText.setTextColor(Color.parseColor(palette.accentGreen))
 
                                 setbackDetailsContainer.removeAllViews()
 
-                                // Badge Header
+                                // Badge Header with horizontal scrolling to prevent squishing/wrapping
+                                val badgeScroll = HorizontalScrollView(this@SettingsActivity).apply {
+                                    isHorizontalScrollBarEnabled = false
+                                    val lp = LinearLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT
+                                    ).apply {
+                                        topMargin = dp(4)
+                                        bottomMargin = dp(6)
+                                    }
+                                    layoutParams = lp
+                                }
+
                                 val badgeRow = LinearLayout(this@SettingsActivity).apply {
                                     orientation = LinearLayout.HORIZONTAL
-                                    setPadding(0, dp(4), 0, dp(6))
+                                    gravity = Gravity.CENTER_VERTICAL
                                 }
-                                fun addHeaderBadge(label: String, bgHex: String, strokeHex: String, textHex: String) {
+                                badgeScroll.addView(badgeRow)
+
+                                for (b in uiModel.badges) {
                                     badgeRow.addView(TextView(this@SettingsActivity).apply {
-                                        text = label
-                                        setTextColor(Color.parseColor(textHex))
+                                        text = b.label
+                                        isSingleLine = true
+                                        setTextColor(Color.parseColor(b.textHex))
                                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                                         setTypeface(typeface, Typeface.BOLD)
-                                        background = roundedBg(bgHex, strokeHex, cornerDp = 6)
-                                        setPadding(dp(6), dp(2), dp(6), dp(2))
+                                        background = roundedBg(b.bgHex, b.strokeHex, cornerDp = 6)
+                                        setPadding(dp(7), dp(3), dp(7), dp(3))
                                         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                                         lp.setMargins(0, 0, dp(6), 0)
                                         layoutParams = lp
                                     })
                                 }
-                                addHeaderBadge("${chosenLoss} W/K", palette.accentGreenBg, palette.accentGreenStroke, palette.accentGreen)
-                                addHeaderBadge("R² = " + String.format(java.util.Locale.US, "%.2f", result.rSquared), palette.badgeBg, palette.badgeStroke, palette.accentBlue)
-                                addHeaderBadge("${result.blockCount} Nocturnal Block(s)", palette.badgeBg, palette.badgeStroke, palette.textSecondary)
-                                if (result.historicalPriorIncorporated) {
-                                    addHeaderBadge("25k Anchor Active", palette.accentBlueBg, palette.accentBlueStroke, palette.accentBlue)
-                                }
-                                setbackDetailsContainer.addView(badgeRow)
+                                setbackDetailsContainer.addView(badgeScroll)
 
                                 // 2x2 Metric Chips Grid
                                 val gridRow1 = LinearLayout(this@SettingsActivity).apply {
@@ -872,10 +1054,10 @@ class SettingsActivity : ComponentActivity() {
                                     lp.setMargins(0, dp(2), 0, dp(4))
                                     layoutParams = lp
                                 }
-                                gridRow1.addView(createMetricChip("Heat Loss Rate", "${chosenLoss} W/K", "Weighted Confidence").apply {
+                                gridRow1.addView(createMetricChip(uiModel.chip1.title, uiModel.chip1.value, uiModel.chip1.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
                                 })
-                                gridRow1.addView(createMetricChip("Cooling Rate", String.format(java.util.Locale.US, "%.2f K/h", result.coolingRateKPerHour), "Drop: " + String.format(java.util.Locale.US, "%.1f K", result.temperatureDropK)).apply {
+                                gridRow1.addView(createMetricChip(uiModel.chip2.title, uiModel.chip2.value, uiModel.chip2.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
                                 })
                                 setbackDetailsContainer.addView(gridRow1)
@@ -886,34 +1068,22 @@ class SettingsActivity : ComponentActivity() {
                                     lp.setMargins(0, 0, 0, dp(4))
                                     layoutParams = lp
                                 }
-                                gridRow2.addView(createMetricChip("Outdoor Temp", String.format(java.util.Locale.US, "%.1f°C", result.avgOutdoorTempC), result.formatLocalTimeSpan()).apply {
+                                gridRow2.addView(createMetricChip(uiModel.chip3.title, uiModel.chip3.value, uiModel.chip3.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
                                 })
-                                gridRow2.addView(createMetricChip("Thermal Mass", String.format(java.util.Locale.US, "%.1f kWh/K", result.effectiveCapacityKwhPerK), "Screed Core C_eff").apply {
+                                gridRow2.addView(createMetricChip(uiModel.chip4.title, uiModel.chip4.value, uiModel.chip4.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
                                 })
                                 setbackDetailsContainer.addView(gridRow2)
 
                                 // Nuances & Physical Audit Trail Box
-                                val priorMsg = if (result.historicalPriorIncorporated) {
-                                    "• 25k Historical Anchor: Blended cumulative historical baseline (${settingsStore.historicalHeatLoss25kWPerK} W/K, weight=${settingsStore.historicalHeatLoss25kWeight.toInt()}) with ${result.blockCount} active observation block(s)."
-                                } else {
-                                    "• 25k Data Window: Scanning up to 25,000 points; established initial multi-night building envelope baseline."
-                                }
-                                val nuanceItems = listOf(
-                                    priorMsg,
-                                    "• Solar Insolation Gate: Excluded daylight & dusk; strictly ≥2h post-sunset to sunrise to eliminate solar radiation lag.",
-                                    "• System Quiescence: Verified compressor 0% modulation, heating & DHW idle, loop spread |Tsup - Tret| ≤ 1.5 K.",
-                                    "• 2R2C State-Space Mass Coupling: Evaluated core discharge factor α (${String.format(java.util.Locale.US, "%.1f", result.effectiveCapacityKwhPerK)} kWh/K dynamic participating capacity).",
-                                    "• Multi-Night Bridging: Seamlessly bridged across calendar midnight; confidence-weighted by R² × duration."
-                                )
-                                setbackDetailsContainer.addView(createNuanceBox("Process Nuances & Physical Adjustments", nuanceItems))
+                                setbackDetailsContainer.addView(createNuanceBox(uiModel.nuanceTitle, uiModel.nuanceItems))
                                 setbackDetailsContainer.visibility = View.VISIBLE
 
-                                applySetbackBtn.text = "Apply ${chosenLoss} W/K to Heat Loss Setting"
+                                applySetbackBtn.text = uiModel.applyButtonText
                                 applySetbackBtn.visibility = View.VISIBLE
                             } else {
-                                setbackStatusText.text = "No valid nocturnal setback cooldown found (requires warm floor discharging ≥2h after sunset with compressor OFF). Leave heat pump in setback tonight to measure."
+                                setbackStatusText.text = i18n.noSetbackCooldownMsg
                                 setbackStatusText.setTextColor(Color.parseColor(palette.accentAmber))
                                 setbackDetailsContainer.visibility = View.GONE
                                 applySetbackBtn.visibility = View.GONE
@@ -951,7 +1121,7 @@ class SettingsActivity : ComponentActivity() {
             val modStatusText = TextView(this@SettingsActivity).apply {
                 val currentBase = String.format(java.util.Locale.US, "%.1f", settingsStore.calibratedModulationAt10C)
                 val currentSlope = String.format(java.util.Locale.US, "%.1f", settingsStore.calibratedModulationSlopePerK)
-                text = "Inverter Modulation Model: ${currentBase}% @ 10°C (+${currentSlope}%/K colder)"
+                text = String.format(i18n.modStatusDefault, currentBase, currentSlope)
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setPadding(0, 0, 0, dp(4))
@@ -965,24 +1135,40 @@ class SettingsActivity : ComponentActivity() {
             modulationCard.addView(modulationDetailsContainer)
 
             val applyModulationBtn = createStyledButton(
-                label = "Apply Calibrated Inverter Model",
+                label = String.format(i18n.applyModulationBtnFormat, "32.0", "1.5"),
                 bgHex = palette.accentGreenBg,
                 strokeHex = palette.accentGreenStroke,
                 textHex = palette.accentGreen
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 visibility = View.GONE
             }
 
             var lastCalibratedProfile: de.breast.telemetry.EmpiricalModulationProfile? = null
 
             val analyzeModulationBtn = createStyledButton(
-                label = "Analyze Inverter Modulation Telemetry",
+                label = i18n.analyzeModulationBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentBlue
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 setOnClickListener {
-                    modStatusText.text = "Scanning up to 25,000 telemetry points for steady-state compressor modulation..."
+                    modStatusText.text = i18n.scanningModulationMsg
                     modStatusText.setTextColor(Color.parseColor(palette.accentAmber))
                     modulationDetailsContainer.visibility = View.GONE
                     applyModulationBtn.visibility = View.GONE
@@ -1000,43 +1186,56 @@ class SettingsActivity : ComponentActivity() {
                             priorWeight = priorWeight
                         )
                         withContext(Dispatchers.Main) {
-                            if (profile != null) {
+                            val uiModel = SettingsAnalysisPresenter.buildModulationUiModel(
+                                profile = profile,
+                                targetTemp = targetTemp,
+                                historicalModAt10C = settingsStore.historicalModulation25kAt10C,
+                                historicalWeight = settingsStore.historicalModulation25kWeight,
+                                i18n = i18n,
+                                palette = palette.toAnalysisPalette()
+                            )
+                            if (uiModel != null) {
                                 lastCalibratedProfile = profile
-                                val baseStr = String.format(java.util.Locale.US, "%.1f", profile.modulationAt10C)
-                                val slopeStr = String.format(java.util.Locale.US, "%.2f", profile.modulationSlopePerK)
-                                val powerStr = String.format(java.util.Locale.US, "%.2f", profile.inferredSteadyPowerKw)
-                                val matchedSp = profile.matchedSetpointTempC ?: targetTemp
 
-                                modStatusText.text = "✓ Inverter Modulation PID Model Calibrated (25k Data Window)"
+                                modStatusText.text = uiModel.statusText
                                 modStatusText.setTextColor(Color.parseColor(palette.accentGreen))
 
                                 modulationDetailsContainer.removeAllViews()
 
-                                // Badge Header
+                                // Badge Header with horizontal scrolling to prevent squishing/wrapping
+                                val badgeScroll = HorizontalScrollView(this@SettingsActivity).apply {
+                                    isHorizontalScrollBarEnabled = false
+                                    val lp = LinearLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT
+                                    ).apply {
+                                        topMargin = dp(4)
+                                        bottomMargin = dp(6)
+                                    }
+                                    layoutParams = lp
+                                }
+
                                 val badgeRow = LinearLayout(this@SettingsActivity).apply {
                                     orientation = LinearLayout.HORIZONTAL
-                                    setPadding(0, dp(4), 0, dp(6))
+                                    gravity = Gravity.CENTER_VERTICAL
                                 }
-                                fun addModBadge(label: String, bgHex: String, strokeHex: String, textHex: String) {
+                                badgeScroll.addView(badgeRow)
+
+                                for (b in uiModel.badges) {
                                     badgeRow.addView(TextView(this@SettingsActivity).apply {
-                                        text = label
-                                        setTextColor(Color.parseColor(textHex))
+                                        text = b.label
+                                        isSingleLine = true
+                                        setTextColor(Color.parseColor(b.textHex))
                                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                                         setTypeface(typeface, Typeface.BOLD)
-                                        background = roundedBg(bgHex, strokeHex, cornerDp = 6)
-                                        setPadding(dp(6), dp(2), dp(6), dp(2))
+                                        background = roundedBg(b.bgHex, b.strokeHex, cornerDp = 6)
+                                        setPadding(dp(7), dp(3), dp(7), dp(3))
                                         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                                         lp.setMargins(0, 0, dp(6), 0)
                                         layoutParams = lp
                                     })
                                 }
-                                addModBadge("Target: " + String.format(java.util.Locale.US, "%.1f°C", matchedSp), palette.accentGreenBg, palette.accentGreenStroke, palette.accentGreen)
-                                addModBadge("R² = " + String.format(java.util.Locale.US, "%.2f", profile.rSquared), palette.badgeBg, palette.badgeStroke, palette.accentBlue)
-                                addModBadge("${profile.detectedRunsCount} Runs (${profile.steadyStateSamples} Steady Samples)", palette.badgeBg, palette.badgeStroke, palette.textSecondary)
-                                if (profile.historicalPriorIncorporated) {
-                                    addModBadge("25k Anchor Active", palette.accentBlueBg, palette.accentBlueStroke, palette.accentBlue)
-                                }
-                                modulationDetailsContainer.addView(badgeRow)
+                                modulationDetailsContainer.addView(badgeScroll)
 
                                 // 2x2 Metric Chips Grid
                                 val gridRow1 = LinearLayout(this@SettingsActivity).apply {
@@ -1045,10 +1244,10 @@ class SettingsActivity : ComponentActivity() {
                                     lp.setMargins(0, dp(2), 0, dp(4))
                                     layoutParams = lp
                                 }
-                                gridRow1.addView(createMetricChip("Baseline Mod", "${baseStr}% @ 10°C", "Inverter Frequency").apply {
+                                gridRow1.addView(createMetricChip(uiModel.chip1.title, uiModel.chip1.value, uiModel.chip1.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
                                 })
-                                gridRow1.addView(createMetricChip("Sensitivity", "+${slopeStr}% / K", "Colder Sensitivity").apply {
+                                gridRow1.addView(createMetricChip(uiModel.chip2.title, uiModel.chip2.value, uiModel.chip2.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
                                 })
                                 modulationDetailsContainer.addView(gridRow1)
@@ -1059,38 +1258,25 @@ class SettingsActivity : ComponentActivity() {
                                     lp.setMargins(0, 0, 0, dp(4))
                                     layoutParams = lp
                                 }
-                                gridRow2.addView(createMetricChip("Steady Power", "~${powerStr} kW", "Shaft + 50W Pump").apply {
+                                gridRow2.addView(createMetricChip(uiModel.chip3.title, uiModel.chip3.value, uiModel.chip3.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
                                 })
-                                gridRow2.addView(createMetricChip("Loop Spread", String.format(java.util.Locale.US, "ΔT = %.1f K", profile.avgSteadyDeltaTC), "Hydraulic Lift").apply {
+                                gridRow2.addView(createMetricChip(uiModel.chip4.title, uiModel.chip4.value, uiModel.chip4.subtitle).apply {
                                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
                                 })
                                 modulationDetailsContainer.addView(gridRow2)
 
                                 // Nuances & Physical Adjustments Audit Box
-                                val overshootPct = ((profile.warmupModulationOverheadFactor - 1.0) * 100.0).roundToInt().coerceAtLeast(0)
-                                val warmupAvgStr = profile.avgWarmupModulationPct?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "55.0%"
-                                val priorModMsg = if (profile.historicalPriorIncorporated) {
-                                    "• 25k Historical Anchor: Incorporated cumulative 25,000-point historical baseline (${String.format(java.util.Locale.US, "%.1f%%", settingsStore.historicalModulation25kAt10C)} @ 10°C, weight=${settingsStore.historicalModulation25kWeight}) into new regression to preserve long-term multi-seasonal learning."
-                                } else {
-                                    "• 25k Data Window: Scanning up to 25,000 points; initializing cumulative 25k historical anchor."
-                                }
-                                val nuanceItems = listOf(
-                                    priorModMsg,
-                                    "• PID Startup Transient Isolated: Separated ${profile.warmupSamplesCount} warmup samples (avg $warmupAvgStr during 20m ramp-up) from steady state (+${overshootPct}% PID overshoot).",
-                                    "• Observed Outdoor Corridor: Telemetry observed between ${String.format(java.util.Locale.US, "%.1f°C", profile.minObservedOutdoorTempC ?: 0.0)} and ${String.format(java.util.Locale.US, "%.1f°C", profile.maxObservedOutdoorTempC ?: 0.0)}; raw modulation ${String.format(java.util.Locale.US, "%.0f%%", profile.minObservedModulationPct)} to ${String.format(java.util.Locale.US, "%.0f%%", profile.maxObservedModulationPct)}.",
-                                    "• Inverter Clamping & Baseline: Enforced 28.0% hardware minimum frequency clamp & 50 W continuous Wilo circulation load."
-                                )
-                                modulationDetailsContainer.addView(createNuanceBox("Process Nuances & Physical Adjustments", nuanceItems))
+                                modulationDetailsContainer.addView(createNuanceBox(uiModel.nuanceTitle, uiModel.nuanceItems))
 
                                 // Dynamic Projection Table
-                                modulationDetailsContainer.addView(createProjectionTable(profile.getOperatingProjections()))
+                                modulationDetailsContainer.addView(createProjectionTable(uiModel.projections))
 
                                 modulationDetailsContainer.visibility = View.VISIBLE
-                                applyModulationBtn.text = "Apply Model (${baseStr}% @ 10°C, +${slopeStr}%/K)"
+                                applyModulationBtn.text = uiModel.applyButtonText
                                 applyModulationBtn.visibility = View.VISIBLE
                             } else {
-                                modStatusText.text = "No active heating runs found matching target setpoint ${String.format(java.util.Locale.US, "%.1f", targetTemp)}°C (≥5 needed). Run heating to collect telemetry."
+                                modStatusText.text = String.format(i18n.noHeatingRunsMsg, String.format(java.util.Locale.US, "%.1f", targetTemp))
                                 modStatusText.setTextColor(Color.parseColor(palette.accentAmber))
                                 modulationDetailsContainer.visibility = View.GONE
                                 applyModulationBtn.visibility = View.GONE
@@ -1130,27 +1316,22 @@ class SettingsActivity : ComponentActivity() {
                 setPadding(0, dp(2), 0, dp(2))
             }
             parasiticHeaderRow.addView(TextView(this@SettingsActivity).apply {
-                text = "Continuous Parasitic Load & Submeter"
+                text = i18n.parasiticSectionTitle
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setTypeface(typeface, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             val parasiticBadge = TextView(this@SettingsActivity).apply {
-                val w = settingsStore.parasiticBaselinePowerWatts.roundToInt()
-                val kwhDay = String.format(java.util.Locale.US, "%.2f", w * 24.0 / 1000.0)
-                text = "$w W (${kwhDay} kWh/d)"
-                setTextColor(Color.parseColor(palette.accentBlue))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setTypeface(typeface, Typeface.BOLD)
                 setPadding(dp(8), dp(2), dp(8), dp(2))
-                background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
             }
             parasiticHeaderRow.addView(parasiticBadge)
             parasiticCard.addView(parasiticHeaderRow)
 
             val parasiticDesc = TextView(this@SettingsActivity).apply {
-                text = "Accounts for secondary underfloor heating pump (~25W) and control boards (~15W) across active and setback hours."
+                text = i18n.parasiticDesc
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setPadding(0, 0, 0, dp(4))
@@ -1158,42 +1339,70 @@ class SettingsActivity : ComponentActivity() {
             parasiticCard.addView(parasiticDesc)
 
             val submeterSwitch = Switch(this@SettingsActivity).apply {
-                text = "External Physical Submeter Installed (e.g. Shelly 3EM)"
+                text = i18n.externalSubmeterLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                 isChecked = settingsStore.externalSubmeterActive
-                setPadding(0, dp(2), 0, dp(4))
-                setOnCheckedChangeListener { _, isChecked ->
-                    settingsStore.externalSubmeterActive = isChecked
-                    val st = if (isChecked) "ACTIVE (Using calibrated submeter)" else "OFF (Default rule of thumb)"
-                    Toast.makeText(this@SettingsActivity, "Submeter calibration $st", Toast.LENGTH_SHORT).show()
-                }
+                setPadding(0, dp(2), 0, dp(2))
             }
             parasiticCard.addView(submeterSwitch)
+
+            val submeterHintView = TextView(this@SettingsActivity).apply {
+                text = i18n.submeterHint
+                setTextColor(Color.parseColor(palette.accentAmber))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setPadding(0, 0, 0, dp(6))
+            }
+            parasiticCard.addView(submeterHintView)
 
             val parasiticSeekBar = SeekBar(this@SettingsActivity).apply {
                 max = 20 // 0..20 corresponds to 20W .. 120W (step 5W)
                 progress = (((settingsStore.parasiticBaselinePowerWatts - 20.0) / 5.0).toInt()).coerceIn(0, 20)
                 setPadding(dp(4), dp(4), dp(4), dp(6))
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                        val w = 20 + progress * 5
-                        val kwhDay = String.format(java.util.Locale.US, "%.2f", w * 24.0 / 1000.0)
-                        parasiticBadge.text = "$w W (${kwhDay} kWh/d)"
-                    }
-                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                    override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                        val w = 20.0 + (seekBar?.progress ?: 6) * 5.0
-                        settingsStore.parasiticBaselinePowerWatts = w
-                    }
-                })
             }
+
+            fun refreshParasiticUi(isActive: Boolean, watts: Int) {
+                if (isActive) {
+                    val kwhDay = watts * 24.0 / 1000.0
+                    parasiticBadge.text = String.format(java.util.Locale.US, i18n.submeterCalibratedBadgeFormat, watts, kwhDay)
+                    parasiticBadge.setTextColor(Color.parseColor(palette.accentBlue))
+                    parasiticBadge.background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+                    parasiticSeekBar.alpha = 1.0f
+                    parasiticSeekBar.isEnabled = true
+                } else {
+                    parasiticBadge.text = i18n.submeterDefaultBadge
+                    parasiticBadge.setTextColor(Color.parseColor(palette.textMuted))
+                    parasiticBadge.background = roundedBg(palette.cardBg, palette.cardStroke, cornerDp = 8)
+                    parasiticSeekBar.alpha = 0.45f
+                    parasiticSeekBar.isEnabled = false
+                }
+            }
+
+            submeterSwitch.setOnCheckedChangeListener { _, isChecked ->
+                settingsStore.externalSubmeterActive = isChecked
+                val w = 20 + parasiticSeekBar.progress * 5
+                refreshParasiticUi(isChecked, w)
+            }
+
+            parasiticSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val w = 20 + progress * 5
+                    refreshParasiticUi(submeterSwitch.isChecked, w)
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    val w = 20.0 + (seekBar?.progress ?: 6) * 5.0
+                    settingsStore.parasiticBaselinePowerWatts = w
+                }
+            })
+
+            refreshParasiticUi(settingsStore.externalSubmeterActive, settingsStore.parasiticBaselinePowerWatts.roundToInt())
             parasiticCard.addView(parasiticSeekBar)
             addView(parasiticCard)
 
             // Weather Diagnostics Button
             val weatherStatusText = TextView(this@SettingsActivity).apply {
-                text = "Open-Meteo DWD ICON: Lat ${settingsStore.weatherLatitude}°N, Lon ${settingsStore.weatherLongitude}°E"
+                text = String.format(java.util.Locale.US, i18n.weatherLocationFormat, settingsStore.weatherLatitude, settingsStore.weatherLongitude)
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setPadding(0, dp(4), 0, dp(4))
@@ -1201,13 +1410,21 @@ class SettingsActivity : ComponentActivity() {
             addView(weatherStatusText)
 
             val testWeatherBtn = createStyledButton(
-                label = "Test Weather Forecast Feed",
+                label = i18n.testWeatherBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentBlue
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 setOnClickListener {
-                    weatherStatusText.text = "Fetching 48h DWD ICON forecast..."
+                    weatherStatusText.text = i18n.weatherFetchingMsg
                     weatherStatusText.setTextColor(Color.parseColor(palette.accentAmber))
                     lifecycleScope.launch {
                         val forecast = runCatching {
@@ -1219,10 +1436,10 @@ class SettingsActivity : ComponentActivity() {
                                 val minT = forecast.minOf { it.outdoorTempC }
                                 val maxT = forecast.maxOf { it.outdoorTempC }
                                 val peakSolar = forecast.maxOf { it.totalRadiationWm2 }.toInt()
-                                weatherStatusText.text = "✓ Weather OK: ${forecast.size}h forecast (Min: ${minT}°C, Max: ${maxT}°C, Peak Solar: ${peakSolar} W/m²)"
+                                weatherStatusText.text = String.format(java.util.Locale.US, i18n.weatherSuccessFormat, forecast.size, minT, maxT, peakSolar)
                                 weatherStatusText.setTextColor(Color.parseColor(palette.accentGreen))
                             } else {
-                                weatherStatusText.text = "✗ Weather offline: using synthetic diurnal curve fallback"
+                                weatherStatusText.text = i18n.weatherOfflineMsg
                                 weatherStatusText.setTextColor(Color.parseColor(palette.accentAmber))
                             }
                         }
@@ -1233,7 +1450,7 @@ class SettingsActivity : ComponentActivity() {
 
             // Hourly Background Sync
             val bgSyncSwitch = Switch(this@SettingsActivity).apply {
-                text = "Automatic Hourly Background Sync"
+                text = i18n.autoSwitchLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 isChecked = settingsStore.autoBackgroundEnabled
@@ -1254,13 +1471,14 @@ class SettingsActivity : ComponentActivity() {
             addView(bgSyncSwitch)
 
             val batteryBtn = createStyledButton(
-                label = "Request Unrestricted Battery (Background Sync)",
+                label = i18n.reqBatteryBtn,
                 bgHex = palette.accentAmberBg,
                 strokeHex = palette.accentAmberStroke,
                 textHex = palette.accentAmber
             ).apply {
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = dp(8)
+                    bottomMargin = dp(6)
                 }
                 layoutParams = lp
                 setOnClickListener { requestIgnoreBatteryOptimizations() }
@@ -1275,6 +1493,7 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun buildSourceItemView(source: SpotPriceSource): View {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
         val itemContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(palette.pageBg, palette.cardStroke, cornerDp = 10)
@@ -1344,7 +1563,7 @@ class SettingsActivity : ComponentActivity() {
         }
 
         val primaryBtn = createStyledButton(
-            label = if (settingsStore.primarySpotSource == source.id) "★ Primary" else "Set Primary",
+            label = if (settingsStore.primarySpotSource == source.id) i18n.primaryLabel else i18n.setPrimaryLabel,
             bgHex = if (settingsStore.primarySpotSource == source.id) palette.accentBlueBg else palette.badgeBg,
             strokeHex = if (settingsStore.primarySpotSource == source.id) palette.accentBlueStroke else palette.badgeStroke,
             textHex = if (settingsStore.primarySpotSource == source.id) palette.accentBlue else palette.textSecondary
@@ -1372,7 +1591,7 @@ class SettingsActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { leftMargin = dp(8) }
             layoutParams = lp
-            text = "Ready"
+            text = i18n.cascadeStatusReady
             setTextColor(Color.parseColor(palette.textMuted))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 6)
@@ -1386,23 +1605,30 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun refreshSourceCascadeUi() {
-        val ordered = settingsStore.getOrderedSpotSources()
-        val cascadeStr = StringBuilder("Priority Cascade:\n")
-        ordered.forEachIndexed { index, src ->
-            val role = if (index == 0) "Primary" else "Fallback $index"
-            cascadeStr.append("${index + 1}. ${src.displayName} ($role)")
-            if (index < ordered.size - 1) {
-                cascadeStr.append("\n  ↳ If delayed/offline: ")
+        if (!::cascadeOrderText.isInitialized) return
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
+        val mode = TariffPricingModel.fromId(settingsStore.tariffPricingModel)
+        if (mode != TariffPricingModel.DYNAMIC_SPOT) {
+            cascadeOrderText.text = String.format(java.util.Locale.US, i18n.cascadeActivePlanFormat, BreastI18n.localizeScenarioLabel(mode.displayName, settingsStore.appLanguage))
+        } else {
+            val ordered = settingsStore.getOrderedSpotSources()
+            val cascadeStr = StringBuilder(i18n.cascadePriorityTitle)
+            ordered.forEachIndexed { index, src ->
+                val role = if (index == 0) i18n.cascadePrimaryRole else String.format(java.util.Locale.US, i18n.cascadeFallbackRoleFormat, index)
+                cascadeStr.append("${index + 1}. ${src.displayName} ($role)")
+                if (index < ordered.size - 1) {
+                    cascadeStr.append(i18n.cascadeDelayedLine)
+                }
             }
+            cascadeOrderText.text = cascadeStr.toString()
         }
-        cascadeOrderText.text = cascadeStr.toString()
 
         for (source in SpotPriceSource.ALL) {
             val isPrimary = settingsStore.primarySpotSource == source.id
             val isEnabled = source.id in settingsStore.enabledSpotSources
 
             sourcePrimaryButtons[source]?.apply {
-                text = if (isPrimary) "★ Primary" else "Set Primary"
+                text = if (isPrimary) i18n.primaryLabel else i18n.setPrimaryLabel
                 background = roundedBg(
                     if (isPrimary) palette.accentBlueBg else palette.badgeBg,
                     if (isPrimary) palette.accentBlueStroke else palette.badgeStroke,
@@ -1415,8 +1641,9 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun runPriceSourceDiagnostics() {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
         sourceStatusViews.values.forEach {
-            it.text = "Checking..."
+            it.text = i18n.cascadeStatusChecking
             it.setTextColor(Color.parseColor(palette.accentAmber))
         }
 
@@ -1426,7 +1653,7 @@ class SettingsActivity : ComponentActivity() {
                 for ((src, res) in results) {
                     val view = sourceStatusViews[src] ?: continue
                     if (res.success) {
-                        view.text = "✓ Online (${res.slotCount} slots, ${res.latencyMs}ms)"
+                        view.text = String.format(java.util.Locale.US, i18n.cascadeStatusOnlineFormat, res.slotCount, res.latencyMs)
                         view.setTextColor(Color.parseColor(palette.accentGreen))
                     } else {
                         view.text = "✗ ${res.message}"
@@ -1450,17 +1677,592 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun confirmClearDatabase() {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
         AlertDialog.Builder(this)
-            .setTitle("Clear Telemetry Database?")
-            .setMessage("This will permanently delete all recorded temperature snapshots and learned steady-state data points.")
-            .setPositiveButton("Clear All") { _, _ ->
-                lifecycleScope.launch {
-                    telemetryStore.clearAll()
-                    Toast.makeText(this@SettingsActivity, "Database cleared.", Toast.LENGTH_SHORT).show()
+            .setTitle(i18n.clearDbTitle)
+            .setMessage(i18n.clearDbMessage)
+            .setPositiveButton(i18n.clearAllBtn) { _, _ ->
+                val res = SettingsAnalysisPresenter.executeSafeClearDatabase(
+                    isDevMode = settingsStore.debugModeEnabled,
+                    originalDbFile = getDatabasePath(de.breast.telemetry.SqliteTelemetryStore.DB_NAME),
+                    cacheDir = cacheDir,
+                    onClearOriginalDb = { lifecycleScope.launch { telemetryStore.clearAll() } }
+                )
+                Toast.makeText(this@SettingsActivity, res.message, Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton(i18n.cancel, null)
+            .show()
+    }
+
+    private fun formatPriceValue(value: Double, maxDecimals: Int = 4): String {
+        return if (value == value.toLong().toDouble()) {
+            String.format(java.util.Locale.US, "%.1f", value)
+        } else {
+            val s = String.format(java.util.Locale.US, "%.${maxDecimals}f", value)
+            s.trimEnd('0').let { if (it.endsWith('.')) "${it}0" else it }
+        }
+    }
+
+    private data class PriceInputField(
+        val root: LinearLayout,
+        val editText: EditText,
+        val badgeView: TextView?
+    )
+
+    private fun createPriceInputField(
+        label: String,
+        sublabel: String? = null,
+        initialValue: String,
+        unitSuffix: String,
+        hintText: String = "0.0",
+        showBadgePreview: Boolean = false,
+        onValueChanged: (Double?) -> Unit
+    ): PriceInputField {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(4)
+            }
+            layoutParams = lp
+        }
+
+        val labelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(2), 0, dp(2))
+        }
+
+        val titleView = TextView(this).apply {
+            text = label
+            setTextColor(Color.parseColor(palette.textPrimary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        labelRow.addView(titleView)
+
+        var badgeView: TextView? = null
+        if (showBadgePreview) {
+            badgeView = TextView(this).apply {
+                setTextColor(Color.parseColor(palette.accentBlue))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            labelRow.addView(badgeView)
+        }
+        container.addView(labelRow)
+
+        if (!sublabel.isNullOrBlank()) {
+            val subView = TextView(this).apply {
+                text = sublabel
+                setTextColor(Color.parseColor(palette.textMuted))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setPadding(0, 0, 0, dp(4))
+            }
+            container.addView(subView)
+        }
+
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(2)
+            }
+            layoutParams = lp
+        }
+
+        val editText = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            isSingleLine = true
+            setText(initialValue)
+            hint = hintText
+            setTextColor(Color.parseColor(palette.textPrimary))
+            setHintTextColor(Color.parseColor(palette.textMuted))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTypeface(typeface, Typeface.BOLD)
+            background = roundedBg(palette.inputBg, palette.inputStroke, cornerDp = 8)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = lp
+
+            setOnEditorActionListener { v, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.hideSoftInputFromWindow(v.windowToken, 0)
+                    v.clearFocus()
+                    true
+                } else {
+                    false
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val raw = s?.toString()?.trim() ?: ""
+                    val parsed = raw.replace(',', '.').toDoubleOrNull()
+                    onValueChanged(parsed)
+                }
+            })
+        }
+        inputRow.addView(editText)
+
+        val suffixBadge = TextView(this).apply {
+            text = unitSuffix
+            setTextColor(Color.parseColor(palette.accentBlue))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+            val lp = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                leftMargin = dp(8)
+            }
+            layoutParams = lp
+        }
+        inputRow.addView(suffixBadge)
+
+        container.addView(inputRow)
+        return PriceInputField(container, editText, badgeView)
+    }
+
+    private fun buildTariffCompositorCard(): LinearLayout {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
+        val card = createCard()
+        card.addView(cardSectionTitle(i18n.tariffSectionTitle))
+        card.addView(cardSubtitle(i18n.tariffSectionSubtitle))
+
+        var activeModel = TariffPricingModel.fromId(settingsStore.tariffPricingModel)
+
+        // 1. Segmented Pricing Model Selector
+        val modelSelectorRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(12))
+        }
+
+        val modelButtons = mutableMapOf<TariffPricingModel, Button>()
+        for (m in TariffPricingModel.entries) {
+            val btn = Button(this).apply {
+                text = when (m) {
+                    TariffPricingModel.DYNAMIC_SPOT -> i18n.dynamicSpotModel
+                    TariffPricingModel.TIME_OF_USE -> i18n.touModel
+                    TariffPricingModel.FLAT_RATE -> i18n.flatRateModel
+                }
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                isAllCaps = false
+                setPadding(dp(4), dp(8), dp(4), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(2), 0, dp(2), 0)
+                }
+                layoutParams = lp
+            }
+            modelButtons[m] = btn
+            modelSelectorRow.addView(btn)
+        }
+        card.addView(modelSelectorRow)
+
+        // Panels for each mode
+        val dynamicPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val touPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val flatPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        var updateDynamicFormula: (() -> Unit)? = null
+        var updateTouSummary: (() -> Unit)? = null
+
+        fun updateModelUi(selected: TariffPricingModel) {
+            activeModel = selected
+            settingsStore.tariffPricingModel = selected.id
+            for ((m, btn) in modelButtons) {
+                if (m == selected) {
+                    btn.background = roundedBg(palette.accentBlueBg, palette.accentBlueStroke, cornerDp = 8)
+                    btn.setTextColor(Color.parseColor(palette.accentBlue))
+                    btn.setTypeface(null, Typeface.BOLD)
+                } else {
+                    btn.background = roundedBg(palette.secondaryBtnBg, palette.secondaryBtnStroke, cornerDp = 8)
+                    btn.setTextColor(Color.parseColor(palette.textPrimary))
+                    btn.setTypeface(null, Typeface.NORMAL)
+                }
+            }
+            dynamicPanel.visibility = if (selected == TariffPricingModel.DYNAMIC_SPOT) View.VISIBLE else View.GONE
+            touPanel.visibility = if (selected == TariffPricingModel.TIME_OF_USE) View.VISIBLE else View.GONE
+            flatPanel.visibility = if (selected == TariffPricingModel.FLAT_RATE) View.VISIBLE else View.GONE
+
+            refreshSourceCascadeUi()
+        }
+
+        for ((m, btn) in modelButtons) {
+            btn.setOnClickListener { updateModelUi(m) }
+        }
+
+        // =========================================================================
+        // PANEL A: DYNAMIC SPOT PRICE COMPOSITOR (UTILITY CONTRACT LETTER FORMAT)
+        // =========================================================================
+        // 1. Base Working Price (Fester Arbeitspreis / Netzentgelte + Steuern/Umlagen)
+        lateinit var surchargeField: PriceInputField
+        fun updateSurchargeGrossBadge() {
+            val net = settingsStore.tariffNetSurchargeCtPerKwh
+            val gross = net * (1.0 + settingsStore.tariffVatRatePercent / 100.0)
+            surchargeField.badgeView?.text = String.format(java.util.Locale.US, "%.2f ct gross", gross)
+        }
+
+        surchargeField = createPriceInputField(
+            label = i18n.baseWorkingPriceLabel,
+            sublabel = i18n.baseWorkingPriceSub,
+            initialValue = formatPriceValue(settingsStore.tariffNetSurchargeCtPerKwh, 4),
+            unitSuffix = "ct/kWh net",
+            showBadgePreview = true
+        ) { parsed ->
+            if (parsed != null && parsed >= 0.0) {
+                settingsStore.tariffNetSurchargeCtPerKwh = parsed
+                updateSurchargeGrossBadge()
+                updateDynamicFormula?.invoke()
+            }
+        }
+        updateSurchargeGrossBadge()
+        dynamicPanel.addView(surchargeField.root)
+
+        // 2. Monthly Base Fee (Grundpreis)
+        val baseFeeField = createPriceInputField(
+            label = i18n.monthlyBaseFeeLabel,
+            sublabel = i18n.monthlyBaseFeeSub,
+            initialValue = formatPriceValue(settingsStore.tariffBaseFeeMonthlyGross, 2),
+            unitSuffix = "€ / month"
+        ) { parsed ->
+            if (parsed != null && parsed >= 0.0) {
+                settingsStore.tariffBaseFeeMonthlyGross = parsed
+                updateDynamicFormula?.invoke()
+            }
+        }
+        dynamicPanel.addView(baseFeeField.root)
+
+        // 3. Value Added Tax (VAT / MwSt)
+        lateinit var vatField: PriceInputField
+        vatField = createPriceInputField(
+            label = i18n.vatLabel,
+            sublabel = i18n.vatSub,
+            initialValue = formatPriceValue(settingsStore.tariffVatRatePercent, 2),
+            unitSuffix = "%"
+        ) { parsed ->
+            if (parsed != null && parsed >= 0.0) {
+                settingsStore.tariffVatRatePercent = parsed
+                updateSurchargeGrossBadge()
+                updateDynamicFormula?.invoke()
+            }
+        }
+        dynamicPanel.addView(vatField.root)
+
+        // Preset VAT chips row
+        val presetRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(6))
+        }
+        val vatPresets = listOf(
+            0.0 to "0% Exempt",
+            7.0 to "7% Reduced",
+            19.0 to "19% DE",
+            20.0 to "20% AT"
+        )
+        for ((rate, label) in vatPresets) {
+            val chip = createStyledButton(
+                label = label,
+                bgHex = palette.secondaryBtnBg,
+                strokeHex = palette.secondaryBtnStroke,
+                textHex = palette.secondaryBtnText
+            ).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(2), 0, dp(2), 0)
+                }
+                layoutParams = lp
+                setOnClickListener {
+                    vatField.editText.setText(String.format(java.util.Locale.US, "%.1f", rate))
+                    vatField.editText.setSelection(vatField.editText.text.length)
+                }
+            }
+            presetRow.addView(chip)
+        }
+        dynamicPanel.addView(presetRow)
+
+        // Live Dynamic Formula Box (matching utility contract letter)
+        val formulaBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8)
+            }
+            layoutParams = lp
+        }
+        val formulaTitleText = TextView(this).apply {
+            text = i18n.contractFormulaTitle
+            setTextColor(Color.parseColor(palette.accentBlue))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, 0, 0, dp(4))
+        }
+        val formulaDetailText = TextView(this).apply {
+            setTextColor(Color.parseColor(palette.textSecondary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            setLineSpacing(dp(2).toFloat(), 1.0f)
+        }
+        formulaBox.addView(formulaTitleText)
+        formulaBox.addView(formulaDetailText)
+        dynamicPanel.addView(formulaBox)
+
+        updateDynamicFormula = {
+            val cfg = settingsStore.buildTariffConfig()
+            val netWorkingPrice = cfg.totalNetSurchargeCtPerKwh
+            val vatMultiplier = 1.0 + cfg.vatRate
+            val floorGross = cfg.computeGrossCtPerKwh(0.0)
+            val sampleSpotNet = 5.0
+            val sampleGross = cfg.computeGrossCtPerKwh(sampleSpotNet * 10.0)
+
+            formulaDetailText.text = String.format(
+                java.util.Locale.US,
+                i18n.contractFormulaDetail,
+                netWorkingPrice,
+                vatMultiplier,
+                cfg.vatRate * 100.0,
+                floorGross,
+                sampleGross,
+                cfg.baseFeeMonthlyGross
+            )
+        }
+        updateDynamicFormula.invoke()
+        card.addView(dynamicPanel)
+
+        // =========================================================================
+        // PANEL B: TIME OF USE (PEAK / OFF-PEAK HT/NT)
+        // =========================================================================
+        // Peak Price (HT)
+        val peakField = createPriceInputField(
+            label = i18n.peakPriceLabel,
+            sublabel = i18n.peakPriceSub,
+            initialValue = formatPriceValue(settingsStore.tariffTouPeakPriceGrossCt, 2),
+            unitSuffix = "ct/kWh gross"
+        ) { parsed ->
+            if (parsed != null && parsed >= 0.0) {
+                settingsStore.tariffTouPeakPriceGrossCt = parsed
+                updateTouSummary?.invoke()
+            }
+        }
+        touPanel.addView(peakField.root)
+
+        // Off-Peak Price (NT)
+        val offPeakField = createPriceInputField(
+            label = i18n.offPeakPriceLabel,
+            sublabel = i18n.offPeakPriceSub,
+            initialValue = formatPriceValue(settingsStore.tariffTouOffPeakPriceGrossCt, 2),
+            unitSuffix = "ct/kWh gross"
+        ) { parsed ->
+            if (parsed != null && parsed >= 0.0) {
+                settingsStore.tariffTouOffPeakPriceGrossCt = parsed
+                updateTouSummary?.invoke()
+            }
+        }
+        touPanel.addView(offPeakField.root)
+
+        // Timetable Start and End Hours
+        val timePickerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(4))
+        }
+        timePickerRow.addView(TextView(this).apply {
+            text = i18n.offPeakHoursLabel
+            setTextColor(Color.parseColor(palette.textPrimary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+
+        val startBtn = createStyledButton(
+            label = String.format(java.util.Locale.US, "%02d:00", settingsStore.tariffTouOffPeakStartHour),
+            bgHex = palette.secondaryBtnBg,
+            strokeHex = palette.secondaryBtnStroke,
+            textHex = palette.accentGreen
+        ).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+
+        val arrowText = TextView(this).apply {
+            text = " → "
+            setTextColor(Color.parseColor(palette.textMuted))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        }
+
+        val endBtn = createStyledButton(
+            label = String.format(java.util.Locale.US, "%02d:00", settingsStore.tariffTouOffPeakEndHour),
+            bgHex = palette.secondaryBtnBg,
+            strokeHex = palette.secondaryBtnStroke,
+            textHex = palette.accentGreen
+        ).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+
+        startBtn.setOnClickListener {
+            var h = settingsStore.tariffTouOffPeakStartHour
+            h = (h + 1) % 24
+            settingsStore.tariffTouOffPeakStartHour = h
+            startBtn.text = String.format(java.util.Locale.US, "%02d:00", h)
+            updateTouSummary?.invoke()
+        }
+
+        endBtn.setOnClickListener {
+            var h = settingsStore.tariffTouOffPeakEndHour
+            h = (h + 1) % 24
+            settingsStore.tariffTouOffPeakEndHour = h
+            endBtn.text = String.format(java.util.Locale.US, "%02d:00", h)
+            updateTouSummary?.invoke()
+        }
+
+        timePickerRow.addView(startBtn)
+        timePickerRow.addView(arrowText)
+        timePickerRow.addView(endBtn)
+        touPanel.addView(timePickerRow)
+
+        // Weekend All-Day Off-Peak Switch
+        val weekendSwitch = Switch(this).apply {
+            text = i18n.weekendOffPeakLabel
+            setTextColor(Color.parseColor(palette.textPrimary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            isChecked = settingsStore.tariffTouWeekendAllOffPeak
+            setPadding(0, dp(4), 0, dp(6))
+            setOnCheckedChangeListener { _, isChecked ->
+                settingsStore.tariffTouWeekendAllOffPeak = isChecked
+                updateTouSummary?.invoke()
+            }
+        }
+        touPanel.addView(weekendSwitch)
+
+        // TOU Live Summary Box
+        val touSummaryBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(6)
+            }
+            layoutParams = lp
+        }
+        val touSummaryTitle = TextView(this).apply {
+            text = i18n.touScheduleTitle
+            setTextColor(Color.parseColor(palette.accentBlue))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, 0, 0, dp(4))
+        }
+        val touSummaryDetail = TextView(this).apply {
+            setTextColor(Color.parseColor(palette.textSecondary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            setLineSpacing(dp(2).toFloat(), 1.0f)
+        }
+        touSummaryBox.addView(touSummaryTitle)
+        touSummaryBox.addView(touSummaryDetail)
+        touPanel.addView(touSummaryBox)
+
+        updateTouSummary = {
+            val peak = settingsStore.tariffTouPeakPriceGrossCt
+            val offPeak = settingsStore.tariffTouOffPeakPriceGrossCt
+            val spread = peak - offPeak
+            val startH = settingsStore.tariffTouOffPeakStartHour
+            val endH = settingsStore.tariffTouOffPeakEndHour
+            val durationHours = if (startH > endH) (24 - startH + endH) else if (startH < endH) (endH - startH) else 24
+            val weekendStr = if (settingsStore.tariffTouWeekendAllOffPeak) i18n.touWeekendAllDay else i18n.touWeekendStandard
+
+            val timetable = TimeOfUseTimetable(
+                peakPriceGrossCtPerKwh = peak,
+                offPeakPriceGrossCtPerKwh = offPeak,
+                offPeakStartHour = startH,
+                offPeakEndHour = endH,
+                weekendAllOffPeak = settingsStore.tariffTouWeekendAllOffPeak
+            )
+            val nowBerlin = java.time.ZonedDateTime.now(SpotPriceClient.BERLIN_ZONE)
+            val currentlyOffPeak = timetable.isOffPeak(nowBerlin)
+            val curRate = timetable.getGrossPrice(nowBerlin)
+            val statusLabel = if (currentlyOffPeak) i18n.touStatusOffPeak else i18n.touStatusPeak
+
+            touSummaryDetail.text = String.format(
+                java.util.Locale.US,
+                i18n.touSummaryDetail,
+                statusLabel,
+                curRate,
+                startH,
+                endH,
+                durationHours,
+                weekendStr,
+                spread,
+                (spread / offPeak.coerceAtLeast(0.1)) * 100.0
+            )
+        }
+        updateTouSummary.invoke()
+        card.addView(touPanel)
+
+        // =========================================================================
+        // PANEL C: FLAT RATE (FESTPREIS)
+        // =========================================================================
+        val flatField = createPriceInputField(
+            label = i18n.flatRateLabel,
+            sublabel = i18n.flatRateSub,
+            initialValue = formatPriceValue(settingsStore.tariffFlatPriceGrossCt, 2),
+            unitSuffix = "ct/kWh gross"
+        ) { parsed ->
+            if (parsed != null && parsed >= 0.0) {
+                settingsStore.tariffFlatPriceGrossCt = parsed
+            }
+        }
+        flatPanel.addView(flatField.root)
+
+        val flatInfoBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(6)
+            }
+            layoutParams = lp
+
+            addView(TextView(this@SettingsActivity).apply {
+                text = i18n.flatRateNoteTitle
+                setTextColor(Color.parseColor(palette.accentBlue))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, 0, 0, dp(4))
+            })
+            addView(TextView(this@SettingsActivity).apply {
+                text = i18n.flatRateNoteDesc
+                setTextColor(Color.parseColor(palette.textSecondary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setLineSpacing(dp(2).toFloat(), 1.0f)
+            })
+        }
+        flatPanel.addView(flatInfoBox)
+        card.addView(flatPanel)
+
+        // Initialize active panel visibility
+        updateModelUi(activeModel)
+
+        return card
     }
 
     private fun requestIgnoreBatteryOptimizations() {

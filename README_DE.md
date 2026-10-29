@@ -1,14 +1,14 @@
-# BREAST — Bosch Reverse Engineering API SingleKey Test
+# BREAST — Bosch Reverse Engineered API Smart Tool for Heatpump (kurz: BREAST Heatpump)
 
 *Sprachen / Languages: [English](README.md) | **Deutsch** | [中文](README_ZH.md)*
 
-[![Build Status](https://img.shields.io/badge/Build-Bestanden%20(62%2F62%20Tests)-brightgreen.svg)]()
+[![Build Status](https://img.shields.io/badge/Build-Bestanden%20(76%2F76%20Tests)-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/Plattform-Android%2014%2B%20%28API%2026%E2%80%9335%29-blue.svg)]()
-[![Target Hardware](https://img.shields.io/badge/Hardware-Bosch%20Compress%207400i%20AW-orange.svg)]()
-[![Gateway](https://img.shields.io/badge/Gateway-Bosch%20Connect--Key%20K30%20RF-purple.svg)]()
+[![Entwicklungsumgebung](https://img.shields.io/badge/Entwicklungsumgebung-Bosch%20Compress%207400i%20AW-orange.svg)]()
+[![Gateway-Umgebung](https://img.shields.io/badge/Gateway--Umgebung-Bosch%20Connect--Key%20K30%20RF-purple.svg)]()
 [![State](https://img.shields.io/badge/Status-Einsatzbereit%20(Daily%20Driver)-success.svg)]()
 
-**BREAST** ist eine native Android-Kotlin-App zur autonomen Optimierung von Schaltzeitplänen und Stromkosten für **Bosch- & Buderus-Luft/Wasser-Wärmepumpen** anhand dynamischer Day-Ahead-Börsenstrompreise (**EPEX Spot DE-LU** via Vattenfall ÖkoStrom Dynamik).
+**BREAST Heatpump** (**B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**) ist eine native Android-Kotlin-App zur autonomen Optimierung von Schaltzeitplänen und Stromkosten für **Bosch- & Buderus-Luft/Wasser-Wärmepumpen** anhand dynamischer Day-Ahead-Börsenstrompreise (**EPEX Spot DE-LU** via Vattenfall ÖkoStrom Dynamik).
 
 Die App kommuniziert über **SingleKey ID OAuth2 + PKCE** direkt mit der **PointT Cloud-API** (`pointt-api.bosch-thermotechnology.com`), protokolliert hochauflösende Anlagentelemetrie in einer lokalen SQLite-Datenbank, visualisiert die physikalische **nichtlineare Buderus/Bosch HPC 410 Vorlauf-Heizkurve**, berechnet ein fortschrittliches **Modellprädiktives Gebäude-Energiebilanzmodell (MPC)** und arbeitet vollkommen autonom im Hintergrund.
 
@@ -81,21 +81,32 @@ Die App kommuniziert über **SingleKey ID OAuth2 + PKCE** direkt mit der **Point
 
 ---
 
-### 5. Hintergrund-Automatisierung & Android 15 Kompatibilität
-* **Stündlicher EPEX Spot Abgleich (`SpotScheduleJobService`):** Prüft stündlich die Veröffentlichung der Day-Ahead-Preise (12:00–15:00 Uhr CET) und überträgt den Plan für morgen, ohne den laufenden Tag zu unterbrechen.
-* **Hochfrequenz-Telemetrie-Ticker (`AlarmManager`):** Zuverlässige Datenerfassung auch im tiefen Android Doze-Energiesparmodus.
-* **Android 15 Edge-to-Edge Design:** Volle Unterstützung von Android 15 (targetSdk 35) mit dynamischer `WindowInsetsCompat.Type.ime()`-Tastaturanpassung gegen Textfeld-Verdeckungen.
+### 5. Strompreis-Compositor & Flexible Tarifmodelle
+* **Dynamischer EPEX-Spot-Compositor:** Ermöglicht die manuelle Kalibrierung aller Stromvertragsbestandteile:
+  $$\text{Gesamt-Brutto} = (\text{Börse}_{\text{netto}} + \text{Arbeitspreis}_{\text{netto}}) \times (1 + \text{MwSt}\%) + \text{Monatlicher Grundpreis}$$
+* **Präzise Texteingabefelder (`EditText`):** Ersetzt ungenaue Schieberegler durch direkte numerische Eingabefelder für alle Preiskomponenten (z. B. `21,3446 ct/kWh netto` Arbeitspreis, `13,80 €/Monat` Grundpreis, `19,0%` MwSt.). Volle Unterstützung für deutsches Komma `,` und internationalen Dezimalpunkt `.`.
+* **Konfigurierbarer MwSt.-Adjuster:** Direkte prozentuale Texteingabe und Schnellauswahl (`0% Steuerbefreit`, `7% Ermäßigt`, `19% DE`, `20% AT`) mit Live-Formel- und Bruttoberechnungs-Vorschau.
+* **Vereinfachter Hoch-/Niedertarif (HT/NT / ToU):** Unterstützt Zweitarif-Modelle mit getrennt editierbaren HT- und NT-Bruttopreisen im Textfeld, anpassbarem Nachtzeitfenster (z. B. 22:00 bis 06:00 Uhr) und ganztägiger Wochenend-NT-Option. Synthetisiert 15-Minuten-Slots, sodass die MPC-Optimierung Heiztakte ohne externe Börsen-APIs in günstige NT-Zeiten verlegt.
+* **Festpreistarif:** Feste Strompreisbasis mit numerischer Texteingabe, bei welcher der Optimierer die Laufzeiten rein nach Carnot-Arbeitszahl, Außenlufttemperaturhub und solarer Einstrahlung ausrichtet.
 
 ---
 
-## Ziel-Anlagenspezifikationen
+### 6. Hintergrund-Automatisierung & Android 15 Kompatibilität
+* **Stündlicher EPEX Spot Abgleich (`SpotScheduleJobService`):** Prüft stündlich die Veröffentlichung der Day-Ahead-Preise (12:00–15:00 Uhr CET) und überträgt den Plan für morgen, ohne den laufenden Tag zu unterbrechen.
+* **Hochfrequenz-Telemetrie-Ticker (`AlarmManager`):** Zuverlässige Datenerfassung auch im tiefen Android Doze-Energiesparmodus.
+* **Android 15 Edge-to-Edge & System-Theme:** Volle Unterstützung von Android 15 (targetSdk 35) über das custom Theme `@style/Theme.BreastApp` (`windowNoTitle = true`, `windowActionBar = false`). Behandelt Systemleisten und Kamera-Aussparungen (`WindowInsetsCompat.Type.displayCutout()`) sowie dynamische Tastaturanpassung (`WindowInsetsCompat.Type.ime()`). Einheitlicher `⚙ Einstellungen`-Button in der Kopfleiste; horizontale Scrollfähigkeit und einzeilige Ausrichtung der empirischen Modell-Badges verhindern Zeilenumbrüche.
+
+---
+
+## Spezifikationen der Entwicklungs- & Testumgebung (Testbed)
 
 * **Wärmepumpe:** Bosch Compress 7400i AW (`CS7400iAW 9 OR-S`)
   * **Außeneinheit:** Modulierender Inverter-Verdichter (230V einphasig, $P_{\text{el}} \approx 0.5 - 2.2\text{ kW}$).
   * **Inneneinheit / Hydrauliktower:** AWM 9 / AWMB 9 mit integriertem **9.0 kW stufenelektrischem Zuheizer** (`eheater`).
   * **Hydraulische Entkopplung:** **120L Heizungspufferspeicher** (*Trennspeicher*) für unterbrechungsfreie Raumheizung bei Warmwasserbetrieb.
+  * **Hydraulische Dynamik & Sensor-Spülung nach WW-Ladung:** Nach Abschluss der Warmwasserladung schwenkt das motorisierte 3-Wege-Ventil vom $55^\circ\text{C}$ heißen Trinkwasserspeicher auf den $22^\circ\text{C}-25^\circ\text{C}$ kühlen Fußbodenrücklauf zurück. Die Primärpumpe spült das kühlere Wasser unmittelbar an den Fühlern der Inneneinheit (`T_supply`, `T_return`) vorbei (scheinbare Abkühlung, kein Speicherverlust). Nach einer ca. 3-minütigen Verdichter-Druckausgleichspause erkennt der HPC 410 das Absinken der Rücklauftemperatur um $\ge 1.2\text{ K}$ unter den Sollwert und startet den Heizbetrieb zuverlässig neu.
 * **Systemregler:** **HPC 410** (`Id: 158`, FW `73.03`, Teile-Nr. `8737712760`) & **CUHP** (`Id: 172`, FW `01.20`) über EMS 2.0 Bus.
-* **Gateway:** **Connect-Key K30 RF** (`K30RF_v1`, FW `15.00.01`, Produkt-UUID `101845229`).
+* **Gateway:** **Connect-Key K30 RF** (`K30RF_v1`, FW `15.00.01`).
 
 ---
 
@@ -107,6 +118,7 @@ beautiful-heisenberg/
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── AndroidManifest.xml          # Berechtigungen, JobService, BootReceiver, OAuth URI
+│   │   │   ├── res/values/styles.xml        # Theme.BreastApp (NoActionBar, Android 15 Edge-to-Edge)
 │   │   │   └── java/de/breast/
 │   │   │       ├── api/
 │   │   │       │   └── PointTApiClient.kt   # Bosch PointT Cloud-REST-Client & Telemetrie
@@ -169,7 +181,7 @@ beautiful-heisenberg/
 * **Android Gradle Plugin:** `9.3.3`
 * **Kotlin:** `2.2.10`
 * **Target SDK:** Android 35 (`compileSdk = 35`, `minSdk = 26`)
-* **Unit-Tests:** **62 / 62 bestanden**
+* **Unit-Tests:** **76 / 76 bestanden**
 
 ### Lokale Unit-Tests ausführen
 Über PowerShell im Projektverzeichnis:
@@ -183,5 +195,38 @@ $gradle = "C:\Users\limuy\.gradle\wrapper\dists\gradle-9.5.0-bin\bvnork1r7n8i6kp
 ### Installation auf dem Smartphone
 1. Projekt in Android Studio öffnen (`c:\Users\limuy\Documents\antigravity\beautiful-heisenberg`).
 2. Android-Gerät über USB oder WLAN-ADB verbinden.
-3. Auf **Run (`app`)** klicken.
+3. Auf **Run (`app`)** klicken oder die fertige `app-release.apk` installieren.
 4. In der App auf **Connect Bosch SingleKey ID** tippen, einmalig anmelden und **Sync Lowest-Price Schedule Now** antippen.
+
+### Erstellung der signierten Release-APK
+Zum Kompilieren der verteilbaren Produktions-APK:
+```powershell
+& $gradle assembleRelease
+```
+Die fertige APK wird unter `app/build/outputs/apk/release/app-release.apk` gespeichert.
+
+### Unterstützte Heizkreise & Hardware-Umfang
+* **Primär-Heizkreis:** BREAST Heatpump optimiert und schreibt die Schaltzeiten für den ersten Heizkreis **`hc1`** (`/heatingCircuits/hc1/switchPrograms/heating/switchPoints`). Anlagen mit mehreren Heizkreisen (z. B. `hc1` Fußbodenheizung + `hc2` Radiatoren) sollten `hc2` über die interne Reglersteuerung weiterbetreiben.
+* **Warmwasserbereitung (DHW):** Liest Telemetrie von `/dhwCircuits/dhw1` aus und vermeidet Überschneidungen während der Speicherladung.
+
+---
+
+## Sicherheitshinweis & Lizenz
+
+Dieses Projekt steht unter der [MIT-Lizenz](LICENSE) als Open-Source zur Verfügung.
+
+> [!CAUTION]
+> **Heizungsanlagen-Sicherheitshinweis:** BREAST Heatpump greift direkt über die Cloud-Schnittstelle in die Zeitprogrammierung Ihrer Wärmepumpe ein. Obwohl das System Mindestlaufzeiten und thermische Gebäudegrenzen einhält, sollte die Anlage bei Inbetriebnahme beobachtet werden. Die Autoren übernehmen keine Haftung für Anlagenverschleiß, unerwartete Stromkosten oder Komfortabweichungen.
+
+---
+
+## Danksagung & Vorarbeiten (Prior Art)
+
+Dieses Projekt baut auf den Erkenntnissen und der Pionierarbeit der Open-Source- und Smart-Home-Community auf, die das Bosch-Thermotechnik- und SingleKey-Ökosystem zuvor analysiert haben:
+
+* **[gladys-bosch-homecom](https://github.com/guim31/gladys-bosch-homecom)** von [Guillaume Morin](https://github.com/guim31) — Lieferte grundlegende Erkenntnisse über die PointT-Cloud-API (`pointt-api.bosch-thermotechnology.com`) und Gateway-Erkennungsstrukturen.
+* **[bosch-homecom-hass](https://github.com/serbanb11/bosch-homecom-hass)** von [@serbanb11](https://github.com/serbanb11) — Home-Assistant-Integrationsdokumentation zu K30-RF- (nur Cloud) vs. K40-RF-Funktionen (lokale API), Endpunkten und Gateway-Eigenheiten.
+* **[homecom_alt](https://github.com/karl2510/homecom_alt)** von [@karl2510](https://github.com/karl2510) — Wertvolle Referenz für den SingleKey-ID OAuth2-PKCE-Token-Austausch, Client-ID-Berechtigungen und Redirect-URI-Handhabung.
+* **[bosch-thermostat-client-python](https://github.com/pschmitt/bosch-thermostat-client-python)** von [Pawel Schmitt](https://github.com/pschmitt) und Mitwirkenden — Grundlegende Entschlüsselung verschachtelter Bosch-Ressourcenbäume und Heizkurven-Parameter.
+* **[Open-Meteo](https://open-meteo.com/) & Deutscher Wetterdienst (DWD)** — Freier Zugang zu hochpräzisen lokalen Solarstrahlungs- und Temperaturprognosen (DWD ICON).
+* **[Fraunhofer ISE Energy-Charts](https://api.energy-charts.info/) & [aWATTar](https://api.awattar.de/)** — Zuverlässige offene Schnittstellen für europäische Day-Ahead-Börsenstrompreise (EPEX Spot).

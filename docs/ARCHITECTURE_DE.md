@@ -1,8 +1,8 @@
-# BREAST Systemarchitektur-Dokumentation
+# BREAST Heatpump Systemarchitektur-Dokumentation
 
 *Sprachen / Languages: [English](ARCHITECTURE.md) | **Deutsch** | [中文](ARCHITECTURE_ZH.md)*
 
-Dieses Dokument beschreibt die Softwarearchitektur, den Datenfluss, die Hintergrund-Automatisierungsmechanismen und die physikalische Einbindung der Heizungsanlage in der Anwendung **BREAST** (*Bosch Reverse Engineering API SingleKey Test*).
+Dieses Dokument beschreibt die Softwarearchitektur, den Datenfluss, die Hintergrund-Automatisierungsmechanismen und die physikalische Einbindung der Heizungsanlage in der Anwendung **BREAST Heatpump** (*Bosch Reverse Engineered API Smart Tool for Heatpump*).
 
 ---
 
@@ -16,7 +16,7 @@ flowchart TD
         BudgetCard["Karte 4: Betriebsbudget\n& Durschn. Leistung (kW)"]
         AutoCard["Karte 5: Hintergrund-Sync\n& EPEX-Daemon"]
         CurveView["HeatingCurveChartView\n& Vollbild-Visualisierer"]
-        SettingsAct["SettingsActivity\n(Gebäudeverlust & Auslegungspunkte)"]
+        SettingsAct["SettingsActivity\n(Tarif-Compositor & empirische Kalibrierung)"]
     end
 
     subgraph Core ["Optimierungs- & Physik-Engine (de.breast.optimizer)"]
@@ -41,7 +41,7 @@ flowchart TD
     end
 
     subgraph External ["Externe Dienste & Schnittstellen"]
-        SpotAPI["EPEX Spot DE-LU\n(Energy-Charts & aWATTar)"]
+        SpotAPI["EPEX Spot DE-LU\n(Vattenfall, Energy-Charts & aWATTar)"]
         WeatherAPI["Open-Meteo Wetter-API\n(Stündliche Außentemperatur-Vorhersage)"]
         SingleKey["Bosch SingleKey ID\n(OAuth2 + PKCE S256)"]
         PointT["Bosch PointT Cloud-API\n(pointt-api.bosch-thermotechnology.com)"]
@@ -119,7 +119,22 @@ flowchart TD
     $$T_{\text{Vorlauf}} = T_{\text{Basis}} + \frac{T_{\text{Auslegung}} - T_{\text{Basis}}}{(-10 - 20)^\alpha} \cdot (T_{\text{Außen}} - 20)^\alpha + \Delta T_{\text{Parallel}}$$
   * Interaktive Querformat-Vollbildansicht mit Referenzkurven [1–5], stationären und transienten Messpunkten, Fadenkreuz-Markierung des aktuellen Betriebspunkts und bidirektional synchronisierter Kurvenauswahl.
 * **`SettingsActivity.kt`**:
-  * Kalibrierungsmaske für den Gebäude-Wärmeverlustkoeffizienten ($H$ in kW/K), maximale thermische Überhöhung ($\Delta T_{\text{max}}$), Basis- und Auslegungstemperaturen sowie Wetterstandort.
+  * **Stromtarif-Compositor & Multi-Tarif-Modelle**:
+    * Dynamischer EPEX-Spot-Compositor: Manuelle Justierung von Netto-Arbeitspreis, Grundpreis und flexibler Mehrwertsteuer (`MwSt`) mit 1-Klick-Ländervorlagen (0%, 7%, 19%, 20%).
+    * Präzise numerische Dezimaleingabefelder (`EditText`) für alle Parameter (mit nativer Unterstützung für deutsches Komma `,` und internationalen Dezimalpunkt `.`).
+    * Hoch-/Niedertarif (HT/NT / ToU): Zweitarif-Modell mit separaten HT- und NT-Preisen, Nachtfenster-Fahrplan und Wochenend-NT-Umschaltung. Synthetisiert 15-Minuten-Slots für die MPC-Zielführung ohne externe Börsen-APIs.
+    * Festpreis-Modus (`Festpreis`): Konstanter Tarif mit direkter Betragseingabe; MPC optimiert die Laufzeiten primär nach Carnot-COP-Effizienz und solaren Wärmegewinnen.
+    * Echtzeit-Vertragsbrief-Vorschau: Zeigt die mathematische Berechnungsformel, Mindest-Bruttopreis (bei 0 ct Börsenpreis), Muster-Arbeitspreis (bei 5 ct Börse) und monatlichen Grundpreis.
+  * **Empirische Modellkalibrierung & Telemetrie**:
+    * Nachtabsenkungs-Analyse und Gebäude-Wärmeverlustberechnung mit 25.000-Punkte-Vergangenheitsanker.
+    * Inverter-Modulations-PID-Kalibrierung mit 2x2 Kennzahlen-Chips und dynamischer Temperatur-Betriebskorridor-Projektionstabelle.
+    * Optimierungs-Präferenzwahlschalter (Komfort, Ausgewogen, Effizienz, Budget).
+    * Estrich-Pufferüberhöhungsschieber, ungemessene parasitäre Dauerlast (50 W) und externe Zähleranbindung.
+  * **Android 15 Edge-to-Edge Theme & Systemarchitektur**:
+    * Eigenes `@style/Theme.BreastApp` Theme basierend auf `@android:style/Theme.DeviceDefault.DayNight` mit `windowNoTitle=true` und `windowActionBar=false`.
+    * Insets-Verarbeitung via `WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()` garantiert sauberen Abstand unter Statusleiste und Kamera-Punch-Hole.
+    * Einheitliche Navigation mit einer einzelnen `⚙ Einstellungen`-Schaltfläche in der Kopfzeile (redundanter Hero-Card-Button entfernt).
+    * Horizontal scrollbare Kennzahlen-Badge-Leisten (`HorizontalScrollView`) mit einzeiliger vertikaler Zentrierung (`Gravity.CENTER_VERTICAL`) verhindern Stauchungen und Zeilenumbrüche.
 
 ---
 
@@ -224,7 +239,7 @@ flowchart TD
 ### 2.5 API- & Authentifizierungsschicht
 * **`SingleKeyAuthManager.kt`**: Verwaltet Bosch SingleKey ID OAuth2 mit PKCE (`S256`), Token-Speicherung und Token-Erneuerung über `refresh_token`.
 * **`PointTApiClient.kt`**: REST-Client für die Bosch PointT Cloud-API (`pointt-api.bosch-thermotechnology.com`). Unterstützt K30-Array-Payloads mit Fallback.
-* **`SpotPriceClient.kt`**: Ruft EPEX Spot `DE-LU` Strompreise über Energy-Charts und aWATTar ab, inklusive Umlagen, 19% MwSt. und dynamischen Vattenfall-Netzentgelten.
+* **`SpotPriceClient.kt`**: Ruft EPEX Spot `DE-LU` Strompreise über Vattenfall Davis, Energy-Charts und aWATTar ab und berechnet Bruttopreise über den konfigurierbaren Tarif-Compositor `ElectricityTariffConfig` (MwSt.-Satz, Netzentgelte, Vertriebsaufschlag). Generiert synthetische 15-Minuten-Slots für HT/NT-Tarife (Hoch-/Niedertarif) und Festpreise.
 * **`WeatherForecastClient.kt`**: Ruft stündliche Außentemperatur-Vorhersagen von Open-Meteo für das MPC-Modell ab.
 
 ---
@@ -267,3 +282,8 @@ flowchart TD
 * Während der Warmwasserbereitung schaltet das 3-Wege-Ventil um. Die Sekundärpumpe versorgt die Fußbodenheizung währenddessen unterbrechungsfrei aus dem 120L-Trennspeicher.
 * Zusammen mit der Speicherfähigkeit des Estrichs bleibt die Raumtemperatur auch bei Warmwasserläufen absolut stabil.
 * **Einheitlicher Zeitplan:** Durch die synchrone Freigabe von Heizung und Warmwasser in den günstigsten Börsenstunden werden Energiekosten minimiert und unnötige Schalttakte vermieden.
+
+### Hydraulischer Umschaltvorgang & Sensorabkühlung nach dem Warmwasserzyklus
+* **Scheinbare Abkühlung des Kreises:** Während der Warmwasserbereitung arbeitet der Wärmeerzeuger auf hohem Temperaturniveau ($50^\circ\text{C}-58^\circ\text{C}$), während der unversorgte Heizkreis Wärme an den Estrich abgibt und der Rücklauf auf Raumtemperaturniveau absinkt ($22^\circ\text{C}-25^\circ\text{C}$). Schaltet das motorisierte 3-Wege-Ventil nach Abschluss der WW-Ladung auf Raumheizung zurück, spült die Primärpumpe das kältere Wasser aus Puffer und Fußbodenrücklauf an den Sensoren der Inneneinheit (`T_supply`, `T_return`) vorbei. Dies führt zu einem sichtbaren Temperatursturz von $55^\circ\text{C}$ auf ca. $23^\circ\text{C}$ innerhalb weniger Sekunden – dies ist ein sensorischer Spüleffekt und kein Wärmeverlust des Warmwasserspeichers.
+* **Verdichter-Entlastung & Druckausgleich:** Während der Ventildrehung moduliert der Verdichter herunter bzw. schaltet kurzzeitig ab, um Hochdruckstörungen (`HD-Wächter`) und Thermoschock am Plattenwärmetauscher zu vermeiden. Eine programmierte Mindeststillstandszeit (ca. 3 Minuten) sichert den Kältemittel-Druckausgleich.
+* **Neustart der Raumheizung:** Sobald das kühlere Rücklaufwasser den Fühler (`TR1`/`TC0`) erreicht, stellt der HPC 410 fest, dass die Ist-Rücklauftemperatur die heizkurvenabhängige Soll-Temperatur um mehr als die Einschaltdifferenz ($\ge 1.2\text{ K}$) unterschreitet, und startet den Verdichter zur Estrichnachheizung.

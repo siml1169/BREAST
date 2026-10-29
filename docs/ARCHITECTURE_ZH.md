@@ -1,8 +1,8 @@
-# BREAST 系统架构技术文档
+# BREAST Heatpump 系统架构技术文档
 
 *语言 / Languages: [English](ARCHITECTURE.md) | [Deutsch](ARCHITECTURE_DE.md) | **中文** |*
 
-本文档详细描述了 **BREAST**（*Bosch Reverse Engineering API SingleKey Test*）原生 Android 应用程序的软件系统架构、数据流动机制、后台自主调度守护进程以及实体热泵供暖系统的物理水路集成。
+本文档详细描述了 **BREAST Heatpump**（*Bosch Reverse Engineered API Smart Tool for Heatpump*）原生 Android 应用程序的软件系统架构、数据流动机制、后台自主调度守护进程以及实体热泵供暖系统的物理水路集成。
 
 ---
 
@@ -16,7 +16,7 @@ flowchart TD
         BudgetCard["卡片 4: 预算硬上限\n& 压缩机平均功率 (kW)"]
         AutoCard["卡片 5: 后台自动化\n& EPEX 现货同步守护进程"]
         CurveView["HeatingCurveChartView\n& 横屏全屏交互图表"]
-        SettingsAct["SettingsActivity\n(建筑热工损失 & 曲线基准点校准)"]
+        SettingsAct["SettingsActivity\n(电价合成器 & 实测模型标定)"]
     end
 
     subgraph Core ["优化计算与物理热力学引擎 (de.breast.optimizer)"]
@@ -41,7 +41,7 @@ flowchart TD
     end
 
     subgraph External ["外部网络服务与数据接口"]
-        SpotAPI["EPEX Spot DE-LU\n(Energy-Charts 与 aWATTar 现货接口)"]
+        SpotAPI["EPEX Spot DE-LU\n(Vattenfall, Energy-Charts 与 aWATTar)"]
         WeatherAPI["Open-Meteo 天气接口\n(逐小时室外气温预报)"]
         SingleKey["博世 SingleKey ID\n(OAuth2 + PKCE S256 鉴权)"]
         PointT["博世 PointT 云端 API\n(pointt-api.bosch-thermotechnology.com)"]
@@ -119,7 +119,22 @@ flowchart TD
     $$T_{\text{供水}} = T_{\text{基准}} + \frac{T_{\text{设计}} - T_{\text{基准}}}{(-10 - 20)^\alpha} \cdot (T_{\text{室外}} - 20)^\alpha + \Delta T_{\text{平移}}$$
   * 横屏全屏模式支持 HPC 410 官方标准参考曲线 [1–5]、稳态工况点与瞬态升温散点、当前工况十字标尺，并与主界面图表持久化双向联动同步。
 * **`SettingsActivity.kt`**：
-  * 提供建筑物散热损耗系数（$H$，单位：kW/K）、最大允许过充温升（$\Delta T_{\text{max}}$）、供热曲线基准点与设计点、以及天气经纬度校准界面。
+  * **电价模型合成器与多元电价支持**：
+    * 动态 EPEX 现货合成器：支持手动标定净基础工作电价（`Arbeitspreis`）、每月基础服务费（`Grundpreis`）与可配置增值税率（`MwSt`），并提供一键式预设方案（0% 免税、7% 优惠、19% 德国、20% 奥地利）。
+    * 纯文本精准小数输入框（`EditText`）：针对所有电价参数全面采用输入框，原生兼容欧洲逗号 `,` 与国际小数点 `.`，彻底根除滑动条粗糙摩擦。
+    * 峰谷平时段（ToU 峰谷电价）：支持尖峰（HT）与低谷（NT）双阶梯电价自定义、夜间波谷时段设定与周末全天低谷电价开关。自动合成分辨率为 15 分钟的时序电价，使 MPC 算法在无外部现货 API 时依然精准引导低谷储热。
+    * 恒定固定电价（`Festpreis`）：支持单价数值直接设定，MPC 优化器纯粹基于卡诺循环 COP 能效比与太阳辐射增益安排最佳开机时机。
+    * 实时合同信件公式预览：直观展示合同测算公式、0 欧分现货基准保底含税价、5 欧分现货参考交付价及月度固定费用。
+  * **实测模型标定与遥测参数调节**：
+    * 夜间降温回水分析与 25,000 点历史贝叶斯锚点建筑物热损失自动解算。
+    * 变频压缩机调制率 PID 模型标定，提供 2x2 核心指标看板与动态温度工况走廊推演表。
+    * 运行优化偏好四分段切换（舒适度、均衡、能效优先、预算优先）。
+    * 地暖蓄热超充限值调节、寄生负载基准功耗设定与外接实体电表校准支持。
+  * **Android 15 沉浸式主题与窗口架构**：
+    * 声明专用 `@style/Theme.BreastApp` 主题（继承自 `@android:style/Theme.DeviceDefault.DayNight`），配置 `windowNoTitle=true` 与 `windowActionBar=false`。
+    * 窗口边缘边距完美适配状态栏与前置摄像头挖孔屏切口（`WindowInsetsCompat.Type.displayCutout()`）。
+    * 精简导航入口：顶部保留单一标准 `⚙ 设置` 按钮（移除了主界面仪表盘多余的重复按钮）。
+    * 遥测标定徽章行（`HorizontalScrollView`）支持水平滚动并强制单行垂直居中（`Gravity.CENTER_VERTICAL`），防止屏幕空间不足导致的文字竖排与布局错位。
 
 ---
 
@@ -224,7 +239,7 @@ flowchart TD
 ### 2.5 接口与身份鉴权层
 * **`SingleKeyAuthManager.kt`**：实现博世 SingleKey ID OAuth2 PKCE（`S256`）免跳转内嵌登录拦截、离线 Token 安全落盘与基于 `refresh_token` 的无感自动轮换。
 * **`PointTApiClient.kt`**：博世 PointT 云端 REST 客户端（`pointt-api.bosch-thermotechnology.com`），支持现代 Connect-Key K30 网关的原生顶层 JSON 数组提交及传统对象封装自动降级。
-* **`SpotPriceClient.kt`**：支持双源冗余拉取德国现货电价（Fraunhofer Energy-Charts 与 aWATTar），精确核算德国 19% 增值税、法定电力税与 Vattenfall 浮动网络附加费。
+* **`SpotPriceClient.kt`**：支持三源冗余拉取德国现货电价（Vattenfall Davis、Fraunhofer Energy-Charts 与 aWATTar），并提供可自定义的电价合成器 `ElectricityTariffConfig`（支持任意增值税率、基础电网费与售电公司溢价调节）。同时支持峰谷平时段（ToU 峰谷电价）与固定电价模型并自动生成 15 分钟合成电价时序。
 * **`WeatherForecastClient.kt`**：对接 Open-Meteo 高精度气象接口，拉取未来 48 小时逐小时室外气温预报供 MPC 算法预测。
 
 ---
@@ -267,3 +282,8 @@ flowchart TD
 * 当系统进入生活热水（DHW）加热周期时，电动三通阀切换至热水水箱。此时二次侧循环水泵持续从 120L 缓冲水箱抽取存量热量循环送入地暖，确保室内地板供水毫无中断。
 * 结合混凝土地暖层巨大的蓄热热惰性，即使热泵机组完全停机数小时或满负荷加热热水，室内体感温度也能保持恒定平稳。
 * **协同统一日程策略**：将地暖采暖与生活热水集中安排在全天最便宜的电价波谷窗口内协同运行，在最大化节省用电开销的同时，消除无序启停造成的设备机械疲劳损耗。
+
+### 生活热水（DHW）加热周期结束后的水力切换与传感器降温物理机理
+* **表面管路快速降温假象**：在生活热水周期中，一次侧水路处于高温工况（$50^\circ\text{C}-58^\circ\text{C}$），而地暖回路在没有热量补充下持续向室内散热，回水温度自然回落至室温水平（$22^\circ\text{C}-25^\circ\text{C}$）。当热水烧满、电动三通换向阀旋转切回采暖侧时，一次侧循环水泵立即将缓冲水箱和地暖回水管中的低温水冲刷过室内塔温感探头（`T_supply`、`T_return`），导致测量温度在几十秒内从 $55^\circ\text{C}$ 暴跌至 $23^\circ\text{C}$。这纯属水路切换带来的传感器瞬态冲刷，并非热水箱失温。
+* **压缩机降频/停机与压力平衡延时**：在三通阀转动换向期间，主控电脑会指令压缩机降至最低频率或暂时停机，以防止系统高压管路突变触发高压保护（`HD-Wächter`）及板换热冲击。系统内建约 3 分钟的防频繁启停平衡停机保护时间。
+* **采暖再启动判定**：一旦地暖低温回水流经回水温度传感器（`TR1`/`TC0`），HPC 410 控制器比对发现当前回水温度远低于采暖曲线计算出的目标回水温度，且差值超过回水启停回差（$\ge 1.2\text{ K}$），因此平衡延时一过，控制器便会立即指令压缩机安全平稳重启，投入空间供暖循环。

@@ -1,8 +1,8 @@
-# BREAST System Architecture Documentation
+# BREAST Heatpump System Architecture Documentation
 
 *Languages / Sprachen / 语言: **English** | [Deutsch](ARCHITECTURE_DE.md) | [中文](ARCHITECTURE_ZH.md)*
 
-This document describes the software architecture, data flow, background scheduling mechanisms, and physical heating plant integration of the **BREAST** (*Bosch Reverse Engineering API SingleKey Test*) application.
+This document describes the software architecture, data flow, background scheduling mechanisms, and physical heating plant integration of the **BREAST Heatpump** (*Bosch Reverse Engineered API Smart Tool for Heatpump*) application.
 
 ---
 
@@ -16,7 +16,7 @@ flowchart TD
         BudgetCard["Card 4: Operating Budget\n& Avg Power Draw (kW)"]
         AutoCard["Card 5: Background Sync\n& EPEX Daemon"]
         CurveView["HeatingCurveChartView\n& Fullscreen Visualizer"]
-        SettingsAct["SettingsActivity\n(Building Loss & Base/Design Pts)"]
+        SettingsAct["SettingsActivity\n(Tariff Compositor & Empirical Calibration)"]
     end
 
     subgraph Core ["Optimization & Physics Engine (de.breast.optimizer)"]
@@ -41,7 +41,7 @@ flowchart TD
     end
 
     subgraph External ["External Services & APIs"]
-        SpotAPI["EPEX Spot DE-LU\n(Energy-Charts & aWATTar)"]
+        SpotAPI["EPEX Spot DE-LU\n(Vattenfall, Energy-Charts & aWATTar)"]
         WeatherAPI["Open-Meteo Weather API\n(Hourly Outdoor Temp Forecast)"]
         SingleKey["Bosch SingleKey ID\n(OAuth2 + PKCE S256)"]
         PointT["Bosch PointT Cloud API\n(pointt-api.bosch-thermotechnology.com)"]
@@ -119,7 +119,22 @@ flowchart TD
     $$T_{\text{supply}} = T_{\text{base}} + \frac{T_{\text{design}} - T_{\text{base}}}{(-10 - 20)^\alpha} \cdot (T_{\text{outdoor}} - 20)^\alpha + \Delta T_{\text{parallel}}$$
   * Interactive fullscreen view supporting reference curves [1–5], steady-state and transient scatter points, live crosshair marker, and persistent chip selections synchronized with the dashboard.
 * **`SettingsActivity.kt`**:
-  * Calibration interface for building heat loss coefficient ($H$ in kW/K), maximum thermal buffering ($\Delta T_{\text{max}}$), heating curve base/design temperatures, and weather location.
+  * **Electricity Tariff Compositor & Multi-Model Pricing**:
+    * Dynamic EPEX Spot Compositor: manual adjustment of net Base Working Price (`Arbeitspreis`), Monthly Base Fee (`Grundpreis`), and configurable VAT (`MwSt`) with one-tap presets (0%, 7%, 19%, 20%).
+    * Direct precision decimal text input boxes (`EditText`) across all pricing parameters (supporting European comma `,` and standard dot `.`) without touch slider friction.
+    * Peak / Off-Peak (ToU HT/NT): two-tier pricing model with custom HT/NT rates, night off-peak timetable, and weekend off-peak toggle. Synthesizes 15-minute price slots so downstream MPC optimization targets off-peak hours without external APIs.
+    * Flat Rate (`Festpreis`): single-rate mode with direct text input where MPC optimizes schedule timing based on thermodynamic Carnot COP and solar gains.
+    * Real-time contract letter preview displaying formula, floor gross price (at 0 ct spot), sample delivered rate (at 5 ct spot), and monthly base fee.
+  * **Empirical Calibration & Telemetry Controls**:
+    * Nocturnal Setback Analysis & building heat loss estimation with 25k historical anchor.
+    * Inverter Modulation PID Model calibration with 2x2 metric chips and dynamic temperature operating corridor table.
+    * Optimization preference selector (Comfort, Balanced, Efficiency, Budget).
+    * Screed pre-heat buffering limit slider, parasitic load & submeter baseline configuration.
+  * **Android 15 Edge-to-Edge Theme & Window Architecture**:
+    * Custom `@style/Theme.BreastApp` theme inheriting from `@android:style/Theme.DeviceDefault.DayNight` with `windowNoTitle=true` and `windowActionBar=false`.
+    * Window insets handling with `WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()` ensuring UI content begins below the camera punch-hole cutout and status bar.
+    * Clean single-entry navigation with sole `⚙ Settings` button in `topNavBar` (removed duplicate hero card button).
+    * Horizontally scrollable empirical model badge rows (`HorizontalScrollView`) with single-line vertical centering (`Gravity.CENTER_VERTICAL`) preventing badge squishing or multi-line wrapping.
 
 ---
 
@@ -224,7 +239,7 @@ flowchart TD
 ### 2.5 API & Authentication Layer
 * **`SingleKeyAuthManager.kt`**: Handles Bosch SingleKey ID OAuth2 with PKCE (`S256`), token storage, and automatic refresh token rotation.
 * **`PointTApiClient.kt`**: REST client for Bosch PointT Cloud API (`pointt-api.bosch-thermotechnology.com`). Transmits modern naked top-level array switch program payloads with wrapped fallback.
-* **`SpotPriceClient.kt`**: Fetches EPEX Spot `DE-LU` prices from Fraunhofer Energy-Charts and aWATTar APIs, applying German taxes, 19% VAT, and Vattenfall dynamic grid surcharges.
+* **`SpotPriceClient.kt`**: Fetches EPEX Spot `DE-LU` prices from Vattenfall Davis, Fraunhofer Energy-Charts, and aWATTar APIs, applying the configurable `ElectricityTariffConfig` compositor (VAT rate, base net surcharges, supplier margin). Automatically compiles synthetic 15-minute price slots when Peak / Off-Peak (ToU HT/NT) or Flat-rate pricing models are active.
 * **`WeatherForecastClient.kt`**: Queries Open-Meteo for hourly outdoor temperature forecasts used by the MPC building energy balance model.
 
 ---
@@ -267,3 +282,8 @@ flowchart TD
 * During Domestic Hot Water heating, the 3-way valve diverts primary heat pump output away from the heating circuit. The secondary circulation pump draws heat from the 120L buffer into the underfloor heating without interruption.
 * Combined with the thermal mass of the floor screed, the building maintains steady indoor comfort during DHW runs.
 * **Unified Schedule Design:** Scheduling both CH and DHW to run during the cheapest spot hours maximizes electricity savings while keeping switch point transitions clean and minimal.
+
+### Post-DHW Cycle Hydraulic Transition & Sensor Flush Dynamics
+* **Apparent Circuit Cooldown:** During a DHW cycle, the primary heat exchanger operates at high temperature ($50^\circ\text{C}-58^\circ\text{C}$) while the floor heating circuit extracts heat into the screed, allowing floor return water to cool toward room temperature ($22^\circ\text{C}-25^\circ\text{C}$). When DHW completes, the motorized 3-way diverter valve pivots back to space heating. The primary pump flushes this cool floor return water past the indoor unit sensors (`T_supply`, `T_return`), causing observed temperatures to drop rapidly from $55^\circ\text{C}$ to $23^\circ\text{C}$ within seconds. This represents hydraulic sensor flushing, not an actual loss of stored domestic hot water heat.
+* **Compressor Deceleration & Pressure Equalization:** During 3-way valve transit, the compressor unloads or pauses to prevent high refrigerant pressure faults (`HD-Wächter`) and plate heat exchanger thermal shock. A built-in anti-short-cycle delay (~3 minutes) allows refrigerant pressures to safely equalize.
+* **Space Heating Reheat Demand:** Once the cool floor return water reaches the return sensor (`TR1`/`TC0`), the HPC 410 calculates that actual return temperature is below the heating curve setpoint by more than the switching hysteresis ($\ge 1.2\text{ K}$), automatically commanding the compressor to fire up and reheat the underfloor screed.

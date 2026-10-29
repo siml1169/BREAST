@@ -7,7 +7,10 @@ import de.breast.optimizer.HeatingTemperatureSlider
 import de.breast.optimizer.HolisticOptimizationConfig
 import de.breast.optimizer.OptimizationPreference
 import de.breast.optimizer.SwitchScheduleConfig
+import de.breast.spot.ElectricityTariffConfig
 import de.breast.spot.SpotPriceSource
+import de.breast.spot.TariffPricingModel
+import de.breast.spot.TimeOfUseTimetable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -21,11 +24,27 @@ class AndroidPrefsTokenStore(context: Context) : TokenStore {
 
     override suspend fun loadTokens(): OAuthTokens? {
         val raw = prefs.getString("oauth_tokens_json", null) ?: return null
-        return runCatching { json.decodeFromString<OAuthTokens>(raw) }.getOrNull()
+        val trimmed = raw.trimStart()
+
+        // 1. Transparent migration from legacy unencrypted JSON
+        if (trimmed.startsWith("{")) {
+            val legacyTokens = runCatching { json.decodeFromString<OAuthTokens>(trimmed) }.getOrNull()
+            if (legacyTokens != null) {
+                // Transparently migrate to hardware-backed encrypted storage
+                saveTokens(legacyTokens)
+            }
+            return legacyTokens
+        }
+
+        // 2. Decrypt with Keystore
+        val decrypted = KeystoreSecretStore.decrypt(raw) ?: return null
+        return runCatching { json.decodeFromString<OAuthTokens>(decrypted) }.getOrNull()
     }
 
     override suspend fun saveTokens(tokens: OAuthTokens) {
-        prefs.edit().putString("oauth_tokens_json", json.encodeToString(tokens)).apply()
+        val serialized = json.encodeToString(tokens)
+        val encrypted = KeystoreSecretStore.encrypt(serialized) ?: serialized
+        prefs.edit().putString("oauth_tokens_json", encrypted).apply()
     }
 
     override suspend fun clearTokens() {
@@ -33,11 +52,14 @@ class AndroidPrefsTokenStore(context: Context) : TokenStore {
     }
 
     override suspend fun savePendingPkceVerifier(verifier: String) {
-        prefs.edit().putString("pkce_verifier", verifier).apply()
+        val encrypted = KeystoreSecretStore.encrypt(verifier) ?: verifier
+        prefs.edit().putString("pkce_verifier", encrypted).apply()
     }
 
     override suspend fun loadPendingPkceVerifier(): String? {
-        return prefs.getString("pkce_verifier", null)
+        val raw = prefs.getString("pkce_verifier", null) ?: return null
+        val decrypted = KeystoreSecretStore.decrypt(raw)
+        return decrypted ?: raw
     }
 }
 
@@ -55,8 +77,27 @@ class AndroidPrefsScheduleStateStore(context: Context) : ScheduleStateStore {
     }
 }
 
+enum class AppLanguage(val code: String, val title: String) {
+    EN("en", "English"),
+    DE("de", "Deutsch"),
+    ZH("zh", "中文");
+
+    companion object {
+        fun fromCode(code: String): AppLanguage =
+            entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: EN
+    }
+}
+
 class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParametersStore {
     private val prefs = context.applicationContext.getSharedPreferences("breast_user_settings", Context.MODE_PRIVATE)
+
+    var heatPumpName: String
+        get() = prefs.getString("heat_pump_custom_name", "Smart Heat Pump") ?: "Smart Heat Pump"
+        set(value) = prefs.edit().putString("heat_pump_custom_name", value.trim().ifEmpty { "Smart Heat Pump" }).apply()
+
+    var appLanguage: AppLanguage
+        get() = AppLanguage.fromCode(prefs.getString("app_language", "en") ?: "en")
+        set(value) = prefs.edit().putString("app_language", value.code).apply()
 
     override val baseBuildingLossKwPerK: Double get() = buildingLossKwPerK
 
@@ -218,6 +259,96 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             ordered.add(SpotPriceSource.VATTENFALL)
         }
         return ordered
+    }
+
+    var tariffPricingModel: String
+        get() = prefs.getString("tariff_pricing_model", TariffPricingModel.DYNAMIC_SPOT.id) ?: TariffPricingModel.DYNAMIC_SPOT.id
+        set(value) = prefs.edit().putString("tariff_pricing_model", value).apply()
+
+    var tariffVatRatePercent: Double
+        get() = prefs.getFloat("tariff_vat_rate_pct", 19.0f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_vat_rate_pct", value.toFloat().coerceIn(0.0f, 100.0f)).apply()
+
+    var tariffNetSurchargeCtPerKwh: Double
+        get() = prefs.getFloat("tariff_net_surcharge_ct", 21.3446f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_net_surcharge_ct", value.toFloat().coerceAtLeast(0.0f)).apply()
+
+    var tariffSupplierMarginNetCt: Double
+        get() = prefs.getFloat("tariff_supplier_margin_net_ct", 0.0f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_supplier_margin_net_ct", value.toFloat().coerceAtLeast(0.0f)).apply()
+
+    var tariffRegionalSurchargeGrossCt: Double?
+        get() {
+            val v = prefs.getFloat("tariff_regional_surcharge_gross_ct", -1f)
+            return if (v >= 0f) v.toDouble() else null
+        }
+        set(value) {
+            if (value == null || value < 0.0) {
+                prefs.edit().remove("tariff_regional_surcharge_gross_ct").apply()
+            } else {
+                prefs.edit().putFloat("tariff_regional_surcharge_gross_ct", value.toFloat()).apply()
+            }
+        }
+
+    var tariffBaseFeeMonthlyGross: Double
+        get() = prefs.getFloat("tariff_base_fee_monthly_gross", 13.80f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_base_fee_monthly_gross", value.toFloat().coerceAtLeast(0.0f)).apply()
+
+    var tariffPriceCapGrossCt: Double?
+        get() {
+            val v = prefs.getFloat("tariff_price_cap_gross_ct", -1f)
+            return if (v > 0f) v.toDouble() else null
+        }
+        set(value) {
+            if (value == null || value <= 0.0) {
+                prefs.edit().remove("tariff_price_cap_gross_ct").apply()
+            } else {
+                prefs.edit().putFloat("tariff_price_cap_gross_ct", value.toFloat()).apply()
+            }
+        }
+
+    var tariffTouPeakPriceGrossCt: Double
+        get() = prefs.getFloat("tariff_tou_peak_price_gross_ct", 38.0f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_tou_peak_price_gross_ct", value.toFloat().coerceAtLeast(0.0f)).apply()
+
+    var tariffTouOffPeakPriceGrossCt: Double
+        get() = prefs.getFloat("tariff_tou_off_peak_price_gross_ct", 24.0f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_tou_off_peak_price_gross_ct", value.toFloat().coerceAtLeast(0.0f)).apply()
+
+    var tariffTouOffPeakStartHour: Int
+        get() = prefs.getInt("tariff_tou_off_peak_start_hour", 22).coerceIn(0, 23)
+        set(value) = prefs.edit().putInt("tariff_tou_off_peak_start_hour", value.coerceIn(0, 23)).apply()
+
+    var tariffTouOffPeakEndHour: Int
+        get() = prefs.getInt("tariff_tou_off_peak_end_hour", 6).coerceIn(0, 23)
+        set(value) = prefs.edit().putInt("tariff_tou_off_peak_end_hour", value.coerceIn(0, 23)).apply()
+
+    var tariffTouWeekendAllOffPeak: Boolean
+        get() = prefs.getBoolean("tariff_tou_weekend_all_off_peak", true)
+        set(value) = prefs.edit().putBoolean("tariff_tou_weekend_all_off_peak", value).apply()
+
+    var tariffFlatPriceGrossCt: Double
+        get() = prefs.getFloat("tariff_flat_price_gross_ct", 32.0f).toDouble()
+        set(value) = prefs.edit().putFloat("tariff_flat_price_gross_ct", value.toFloat().coerceAtLeast(0.0f)).apply()
+
+    fun buildTariffConfig(): ElectricityTariffConfig {
+        return ElectricityTariffConfig(
+            pricingModel = TariffPricingModel.fromId(tariffPricingModel),
+            vatRate = (tariffVatRatePercent / 100.0).coerceIn(0.0, 1.0),
+            netSurchargeCtPerKwh = tariffNetSurchargeCtPerKwh,
+            supplierMarginNetCtPerKwh = tariffSupplierMarginNetCt,
+            regionalSurchargeGrossCtPerKwh = tariffRegionalSurchargeGrossCt,
+            baseFeeMonthlyGross = tariffBaseFeeMonthlyGross,
+            priceCapGrossCtPerKwh = tariffPriceCapGrossCt,
+            touTimetable = TimeOfUseTimetable(
+                peakPriceGrossCtPerKwh = tariffTouPeakPriceGrossCt,
+                offPeakPriceGrossCtPerKwh = tariffTouOffPeakPriceGrossCt,
+                offPeakStartHour = tariffTouOffPeakStartHour,
+                offPeakEndHour = tariffTouOffPeakEndHour,
+                weekendAllOffPeak = tariffTouWeekendAllOffPeak
+            ),
+            flatPriceGrossCtPerKwh = tariffFlatPriceGrossCt
+        )
     }
 
     var holisticOptimizationEnabled: Boolean

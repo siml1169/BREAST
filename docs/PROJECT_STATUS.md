@@ -1,8 +1,10 @@
-# BREAST Project Status & Roadmap
+# BREAST Heatpump Project Status & Roadmap
 
-**Current Version:** `1.0.0-rc2` (Daily Driver Usable)  
-**Last Updated:** October 29, 2026  
-**Build Status:** [![Build Status](https://img.shields.io/badge/Build-Passing%20(62%2F62%20tests)-brightgreen.svg)]()  
+*Bosch Reverse Engineered API Smart Tool for Heatpump (in short: BREAST Heatpump)*
+
+**Current Version:** `1.0.0-rc3` (Daily Driver Usable)<br>
+**Last Updated:** October 29, 2026<br>
+**Build Status:** [![Build Status](https://img.shields.io/badge/Build-Passing%20(76%2F76%20tests)-brightgreen.svg)]()
 
 ---
 
@@ -13,8 +15,10 @@
 | **Authentication** | Bosch SingleKey ID OAuth2 | ✅ Complete | In-app WebView interceptor, PKCE `S256` exchange |
 | | Automatic Token Refresh | ✅ Complete | Refreshes access tokens via `refresh_token` automatically |
 | | Credential Alert Notifications | ✅ Complete | Notifies user if SingleKey ID requires re-authentication |
-| **Schedule Optimizer** | EPEX Spot DE-LU Day-Ahead Client | ✅ Complete | Multi-source fallback: Fraunhofer Energy-Charts & aWATTar DE |
+| **Schedule Optimizer** | EPEX Spot DE-LU Day-Ahead Client | ✅ Complete | Multi-source fallback: Vattenfall Davis, Fraunhofer Energy-Charts & aWATTar DE |
 | | Vattenfall Dynamic Tariff Calculation | ✅ Complete | Includes 19% VAT, grid fees ($21.34\text{ ct}$ net base floor), and regional surcharges |
+| | **Electricity Tariff Compositor** | ✅ Complete | `ElectricityTariffConfig`: Dynamic Spot, Peak/Off-Peak (ToU HT/NT), Flat Rate, configurable VAT & presets |
+| | **Direct Precision Text Inputs** | ✅ Complete | Clean decimal `EditText` input across all tariff parameters; supports European comma `,` and dot `.` |
 | | Static Lowest-Price Window Finder | ✅ Complete | Discretized 15-min raster with exact runtime matching |
 | | **Holistic MPC Optimization Engine** | ✅ Complete | 3-state building thermal inertia + Carnot COP model |
 | | **4 Optimization Preferences** | ✅ Complete | Comfort, Balanced, Efficiency (COP / Bang for Buck), Budget Priority |
@@ -42,6 +46,7 @@
 | | **Setpoint Consistency Filter** | ✅ Complete | Excludes anomalous high/low setpoint telemetry from regression |
 | | **Building Heat Loss Tracking (Model 3)** | ✅ Complete | 2R2C State-Space Observer: continuous multi-point linear regression ($R^2 \ge 0.70$), dynamic participating thermal mass ($C_{\text{eff}} = C_{\text{screed}} + \alpha \cdot C_{\text{indoor}}$, $4.8 .. 13.3\text{ kWh/K}$), seamless midnight bridging, and multi-night weighting |
 | | **Parasitic Load & Submeter Calibration** | ✅ Complete | Generous 50W rule of thumb continuous baseline (~25W secondary pump + ~15W electronics + primary pump); configurable variable prepared for external submeter calibration |
+| | **Post-DHW Hydraulic Dynamics Model** | ✅ Complete | Explains apparent loop cooldown after DHW, 3-way diverter sensor flush, compressor pressure dwell, and HPC 410 return hysteresis reheat |
 | | One-Tap Data Export | ✅ Complete | Exports complete database as CSV/JSON via Android Share |
 | **Background Automation**| Hourly Price Check (`JobScheduler`) | ✅ Complete | Runs daily between 12:00 and 15:00 CET |
 | | High-Frequency Telemetry Ticker | ✅ Complete | `AlarmManager.setAndAllowWhileIdle()` (`1 .. 60 min`) |
@@ -49,11 +54,18 @@
 | | Boot & Package Replaced Receiver | ✅ Complete | Automatically restores cron and alarm ticks on reboot |
 | | Unrestricted Battery Shortcut | ✅ Complete | Direct prompt to exempt app from aggressive OEM Doze |
 | **User Interface** | System-Following Adaptive Theme | ✅ Complete | Follows Android system Light & Dark modes |
+| | **Android 15 Edge-to-Edge & NoActionBar Theme** | ✅ Complete | `@style/Theme.BreastApp` (`windowNoTitle=true`), punch-hole cutout insets (`displayCutout()`), IME keyboard insets |
+| | **Dedicated BREAST Brand Title Card** | ✅ Complete | Restored dedicated header title card with localized app title and subtitle at dashboard top |
+| | **Editable Appliance Custom Name** | ✅ Complete | Custom heat pump naming in hero card with instant pencil edit dialog (`✎`) and persistence |
+| | **Complete Trilingual Localization (EN, DE, ZH)** | ✅ Complete | `BreastI18n.kt`: Exhaustive dictionary covering all cards, buttons, timetables, formulas, setback/modulation diagnostics, and dialogs across English, Deutsch, and 中文 |
+| | **Stacked Aligned Badges & Left-Aligned Dot Icons** | ✅ Complete | `Connected`, `Background Active`, and `⚙ Settings` stacked vertically in 140dp column with identical height (28dp), corner radius (8dp), and left-aligned icons/dots (`Gravity.START`) |
+| | **Button Bottom Margins & Shadow Clipping Elimination** | ✅ Complete | `elevation = 0f` and `stateListAnimator = null` on flat styled buttons with 22dp card bottom padding and 6dp bottom margins to eliminate jagged shadow artifacts on rounded cards |
+| | **Compact Overflow-Safe Telemetry Controls** | ✅ Complete | Compact `Refresh Telemetry` button avoiding tile boundary cutoffs |
+| | **Clean Top Navigation & Centered Badges** | ✅ Complete | Single canonical `⚙ Settings` button; `HorizontalScrollView` with centered single-line empirical badges |
 | | Pull-to-Refresh Gesture | ✅ Complete | Drag top to refresh live telemetry & sync schedule |
 | | **Fullscreen Interactive Visualizer** | ✅ Complete | Landscape canvas with HPC 410 reference curves & live crosshair |
 | | Persistent Overlay State | ✅ Complete | Selected graph overlays persist between fullscreen and main screen |
-| | Android 15 Edge-to-Edge Keyboard Insets | ✅ Complete | Automatic scroll adjustment so IME keyboard never obscures inputs |
-| | Real-Time Input Persistence | ✅ Complete | Budget and power draw inputs commit instantly on edit |
+| | Real-Time Input Persistence | ✅ Complete | Budget, power draw, and tariff compositor inputs commit instantly on edit |
 | | Card Separation | ✅ Complete | Distinct cards for Budget/Power and Background Automation |
 | | Collapsible Developer / Debug Mode | ✅ Complete | Terminal logs and raw endpoint inspector hidden by default |
 
@@ -118,6 +130,47 @@
 * **Window-Specific vs. 24h Total Energy & Cost Double-Tracking:** Separated active window operating consumption from continuous 24-hour parasitic draw ($50\text{ W}$ secondary circulation pump and electronics) across UI badges, sync states, and in-app audit reporting.
 * **Thermodynamic Audit Breakdown (Section 5):** Added Section 5 ("Dynamic Runtime Corridor (Harmonized Quantizer)") to the physics modal, providing transparent visibility into dialed target, mode expansion percentage, quantizer step, search slot range, and applied schedule delta.
 * All 62 unit tests passing and deployed live on physical hardware (`Pixel 10 Pro - 17`).
+
+### Milestone 6: Electricity Tariff Compositor, Multi-Model Pricing, Post-DHW Hydraulic Dynamics & Android 15 UI Polish (✅ COMPLETE)
+* **Electricity Tariff Compositor & Precision Numeric Inputs:**
+  * Replaced slider controls with direct decimal text inputs (`EditText`) for Base Working Price (`Arbeitspreis`), Monthly Base Fee (`Grundpreis`), and VAT (`MwSt`), accepting both European comma `,` and standard dot `.`.
+  * Multi-pricing model selector: Dynamic Spot (`SpotPriceConfig`), Simplified Peak / Off-Peak (ToU HT/NT with custom night window and weekend toggle), and Flat-Rate (`Festpreis`).
+  * Automatic synthetic 15-minute price slot generation for downstream MPC optimizers without external API dependencies.
+  * Configurable VAT adjuster with one-tap regional presets (0% Exempt, 7% Reduced, 19% DE, 20% AT) and real-time gross rate preview.
+* **Post-DHW Cycle Hydraulic Transition & Sensor Flush Dynamics:**
+  * Modeled and documented the physical transition when the motorized 3-way diverter valve returns from the $55^\circ\text{C}$ domestic hot water cylinder to space heating.
+  * Clarified that the observed rapid drop from $55^\circ\text{C}$ to $23^\circ\text{C}$ is a primary pump sensor flush of cool floor return water, not cylinder heat loss.
+  * Documented the compressor pressure equalization dwell pause (~3 minutes) and the subsequent space heating reheat cycle triggered by HPC 410 return temperature hysteresis ($\ge 1.2\text{ K}$).
+* **Android 15 Edge-to-Edge Theme & UI Polish:**
+  * Removed default platform `ActionBarOverlayLayout` titled "BREAST Heatpump" via custom theme `@style/Theme.BreastApp` (`windowNoTitle = true`, `windowActionBar = false`) and `requestWindowFeature(Window.FEATURE_NO_TITLE)`.
+  * Corrected window insets padding for system bars, camera punch-hole cutout (`displayCutout()`), and soft keyboard (`ime()`).
+  * Removed duplicate Settings button from the dashboard hero card, leaving the top-right navbar `⚙ Settings` as the sole canonical entry point.
+  * Enforced horizontal scrolling and single-line centering on empirical model chips (`⚓ 25k Anchor Active`, `R² = 0.97`, etc.) in `SettingsActivity.kt`, eliminating vertical text wrapping and alignment distortions.
+* All 68 unit tests passing and verified live on physical hardware (`Pixel 10 Pro - 17`).
+
+### Milestone 7: Deep Trilingual Localization & Visual Precision Polish (✅ COMPLETE)
+* **Comprehensive Trilingual Architecture (`BreastI18n.kt`):**
+  * Built complete runtime localization across English (`EN`), Deutsch (`DE`), and Chinese (`ZH`) with zero UI layout shift or truncated strings.
+  * **Physics & Thermodynamic Audit Dialog:** Dynamically translates full 5-section thermodynamic breakdown text (Weather Conditions, 2R2C Coupled State-Space Model, Inverter Modulation & Thermodynamics, Tariff & Cost Breakdown, and Harmonized Dynamic Runtime Corridor) including preference titles and physical units.
+  * **Scheduled Lowest-Price Window:** Real-time localization of today's and tomorrow's operational schedule cards, translated switch points (`HEATING ON` / `SETBACK`, setpoint temperatures, domestic hot water states), cost estimations, and budget notes.
+  * **Live System Telemetry:** Complete translations for HPC 410 curve evaluations, parallel shift badges, equilibrium and transient sample classifications, and operational demand badges (`DHW`, `Heating`, `Idle`).
+  * **Cascade Priority:** Localized priority cascades, dynamic fallback levels, and live API connection diagnostics status indicators.
+  * **Empirical Regression & Weather Diagnostics:** Full localization of 2x2 metric chips (Heat Loss Rate, Cooling Rate, Outdoor Temp, Screed Core Thermal Mass, Baseline Modulation, Sensitivity, Steady Power, Loop Spread), mathematical audit trails (Solar insolation gating, PID startup transient isolation, 25k historical anchor blending), and live DWD ICON weather diagnostics.
+* **Hero Tile & Badge Alignment Refinements:**
+  * Restored dedicated BREAST brand title card with localized app title and subtitle.
+  * Editable appliance custom naming dialog with instant pencil edit shortcut (`✎`) and SharedPreferences persistence.
+  * Vertically stacked badge column with identical width, height (28dp), corner radius (8dp), and left-aligned dot icons.
+  * Removed button elevation and shadow clipping artifacts across all rounded card fringes.
+* **Button Click Stability & Safe Database Testing:**
+  * Resolved formatting type conversion crashes in Night Setback and Inverter Modulation analysis workflows.
+  * Extracted pure UI presenters (`SettingsAnalysisPresenter.kt`) with comprehensive unit testing simulating button analysis rendering across EN, DE, and ZH.
+  * Implemented safe dev-mode database copy-and-delete mechanism (`SqliteTelemetryStore.safeDevModeClearCopy`) ensuring real user telemetry is never purged during developer testing.
+* **Security Hardening & Component Access Lockdown:**
+  * **Exported Activity Lockdown:** Marked internal screens `SettingsActivity` and `HeatingCurveFullscreenActivity` with `android:exported="false"`, preventing unauthorized external intent execution.
+  * **Isolated Alarm Receiver (`ScheduleAlarmReceiver`):** Extracted internal `AlarmManager` tick handling into an unexported receiver, restricting `BootCompletedReceiver` solely to Android OS boot and package replacement events.
+  * **Hardware-Backed AES-256-GCM Token Encryption (`KeystoreSecretStore.kt`):** Encrypted SingleKey ID OAuth tokens, refresh tokens, and PKCE verifiers using the Android Keystore. Includes transparent automatic migration of legacy plaintext tokens with zero user re-login required.
+  * **Backup Data Extraction Rules (`res/xml/`):** Configured Android 12+ `data-extraction-rules` and legacy `backup-rules` to explicitly exclude sensitive authentication tokens from cloud backups and ADB data extraction.
+* All 76 unit tests passing and verified.
 
 ---
 

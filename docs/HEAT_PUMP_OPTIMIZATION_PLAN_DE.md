@@ -1,4 +1,6 @@
-# Ganzheitliches Wärmepumpen-Entscheidungs- & Optimierungssystem (v2.0)
+# BREAST Heatpump — Ganzheitliches Betriebsentscheidungs- & Optimierungssystem (v2.0)
+
+*Bosch Reverse Engineered API Smart Tool for Heatpump (kurz: BREAST Heatpump)*
 
 *Sprachen / Languages: [English](HEAT_PUMP_OPTIMIZATION_PLAN.md) | **Deutsch** | [中文](HEAT_PUMP_OPTIMIZATION_PLAN_ZH.md)*
 
@@ -352,3 +354,9 @@ Die Oberfläche zeigt die realen Schaltpunkte an:
     wobei $Q = 0.5\text{ h}$ ($30\text{ min}$) dem Schieberegler entspricht und sich sauber in ganzzahlige $15\text{ min}$-Rasterslots zerlegt.
   - **Abschnitt 5 im Thermodynamik-Prüfbericht:** Vollständige Transparenz über Schieberegler-Zielwert, Modus-Zuschlag, Quantisiererschritt, Slot-Suchbereich und tatsächlich realisiertes Delta im In-App-Dialog.
   - **Verifikation:** Unit-Tests von $2.0\text{ h}$ bis $16.0\text{ h}$ mit $0.5\text{ h}$ und $0.25\text{ h}$ Quantisierern; alle 59 Unit-Tests bestanden und live auf dem Smartphone mit der Bosch K30 synchronisiert.
+- [x] **Phase 22: Stromtarif-Compositor, Multi-Tarifmodelle, WW-Hydraulikdynamik & Android 15 UI-Feinschliff:**
+  - **Stromtarif-Compositor:** Schieberegler durch direkte numerische Texteingabefelder (`EditText`) ersetzt, die sowohl deutsches Komma `,` als auch internationalen Dezimalpunkt `.` akzeptieren (Arbeitspreis, monatlicher Grundpreis und konfigurierbare MwSt. mit Schnellwahl für 0%, 7%, 19% DE, 20% AT).
+  - **Unterstützung diverser Tarifmodelle:** Dynamischer Spot-Tarif, vereinfachter Hoch-/Niedertarif (HT/NT / ToU) mit anpassbarem Nachtzeitfenster und Wochenend-Option sowie Festpreistarif (`Festpreis`). Synthetisiert 15-Minuten-Preisvektoren, sodass die MPC-Optimierung ohne externe Börsen-APIs günstige Zeiten ansteuert.
+  - **Hydraulische Dynamik & Sensor-Spülung nach WW-Ladung:** Physikalische Modellierung des Schwenkvorgangs des motorisierten 3-Wege-Ventils vom $55^\circ\text{C}$ heißen Trinkwasserspeicher zurück auf die Raumheizung ($22^\circ\text{C}-25^\circ\text{C}$). Klarstellung des rapiden Sensor-Temperatursturzes als Spüleffekt des kühlen Estrichrücklaufs (kein Speicherverlust). Dokumentation der ~3-minütigen Verdichter-Druckausgleichspause und des anschließenden Wiederanlaufs über die HPC 410 Rücklauftemperatur-Schalthysterese ($\ge 1.2\text{ K}$).
+  - **Android 15 Edge-to-Edge Theme & UI-Architektur:** Entfernung der standardmäßigen `ActionBarOverlayLayout` („BREAST Heatpump“) über das Theme `@style/Theme.BreastApp` (`windowNoTitle=true`, `windowActionBar=false`) in `styles.xml` und `requestWindowFeature(Window.FEATURE_NO_TITLE)`. Aussparungs-Insets für Display-Cutouts (`WindowInsetsCompat.Type.displayCutout()`). Entfernung des doppelten Einstellungs-Buttons aus der Dashboard-Karte; horizontale Scrollfähigkeit und einzeilige Ausrichtung der empirischen Modell-Badges (`⚓ 25k Anchor Active`, `R²` etc.).
+  - **Verifikation:** Unit-Tests in [`BreastCoreTest.kt`](../app/src/test/java/de/breast/BreastCoreTest.kt) für Tarif-Serialisierung, synthetische Slots und Live-Verifikation auf dem Pixel 10 Pro. Alle 68 Unit-Tests bestanden.

@@ -35,7 +35,7 @@ data class TelemetryWindowAverage(
 
 class SqliteTelemetryStore(
     context: Context,
-    dbName: String = DB_NAME
+    val dbName: String = DB_NAME
 ) : SQLiteOpenHelper(context, dbName, null, DB_VERSION), TelemetryStore {
 
     companion object {
@@ -189,6 +189,23 @@ class SqliteTelemetryStore(
     override suspend fun clearAll() = withContext(Dispatchers.IO) {
         writableDatabase.delete(TABLE_SNAPSHOTS, null, null)
         Unit
+    }
+
+    suspend fun safeDevModeClearCopy(context: Context): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val originalDbFile = context.getDatabasePath(dbName)
+            val copyDbFile = java.io.File(context.cacheDir, "dev_copy_${dbName}")
+            if (originalDbFile.exists()) {
+                originalDbFile.copyTo(copyDbFile, overwrite = true)
+            } else {
+                copyDbFile.writeText("dev_test_placeholder")
+            }
+            // Safely delete the copy so user's real DB is never harmed
+            val deleted = copyDbFile.delete()
+            deleted || !copyDbFile.exists()
+        } catch (e: Exception) {
+            false
+        }
     }
 
     override suspend fun purgeSnapshotsWithSetpointAbove(thresholdC: Double): Int = withContext(Dispatchers.IO) {

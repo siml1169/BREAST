@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Exclude sensitive SingleKey OAuth tokens and hardware Keystore-bound secrets -->
+        <exclude domain="sharedpref" path="breast_auth_prefs.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Prevent unencrypted local/cable extraction of credentials -->
+        <exclude domain="sharedpref" path="breast_auth_prefs.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,6 +1,6 @@
-# BREAST Engineering Postmortem & Technical Discoveries
+# BREAST Heatpump Engineering Postmortem & Technical Discoveries
 
-This document captures the reverse-engineering breakthroughs, root cause investigations, technical dead-ends, and architectural decisions made during the development of **BREAST**.
+This document captures the reverse-engineering breakthroughs, root cause investigations, technical dead-ends, and architectural decisions made during the development of **BREAST Heatpump** (*Bosch Reverse Engineered API Smart Tool for Heatpump*).
 
 ---
 
@@ -191,3 +191,21 @@ When Holistic Optimization was toggled off (`isHolistic = false`), `dailyBudgetE
 1. Unconditionally passed `dailyBudgetEuro = dailyBudgetEuro` to `SwitchScheduleConfig`.
 2. Added `addTextChangedListener` on `budgetInput` and `powerInput` to commit edits immediately in real time.
 3. Added explicit calls to `saveInputsToSettings()` at the beginning of all manual schedule sync triggers.
+
+---
+
+## 13. Prior Art & Open-Source Lineage
+
+The reverse-engineering and protocol mapping in BREAST Heatpump was not achieved entirely in isolation, but stands on key foundations established by earlier open-source investigations into the Bosch Thermotechnology cloud:
+
+1. **`guim31/gladys-bosch-homecom` (Guillaume Morin):**
+   * Identified the primary PointT cloud API gateway domain (`pointt-api.bosch-thermotechnology.com/pointt-api/api/v1`), gateway query routes (`/gateways`), and foundational JSON structure for reading telemetry nodes and recordings.
+2. **`serbanb11/bosch-homecom-hass` (@serbanb11):**
+   * The comprehensive Home Assistant integration documentation that established the crucial architectural distinction between **K30 RF** (cloud-only API) and **K40 RF** (local LAN pairing), preventing wasted effort attempting local token requests on K30 hardware.
+3. **`karl2510/homecom_alt` (@karl2510):**
+   * Invaluable technical reference for the Bosch SingleKey ID OAuth2 PKCE authorization flow (`singlekey-id.com/auth/connect/authorize`), client ID scopes (`pointt.gateway.resource.dashapp`, `pointt.castt.flow.token-exchange`, etc.), and mobile URI scheme handling.
+4. **`pschmitt/bosch-thermostat-client-python` (Pawel Schmitt & contributors):**
+   * Pioneering groundwork reverse-engineering the nested Bosch resource trees, read/write permissions, and Buderus/Bosch thermostat characteristics.
+5. **Weather & Spot Price Infrastructure:**
+   * **Open-Meteo** and **Deutscher Wetterdienst (DWD)** for high-precision local solar and temperature forecasts.
+   * **Fraunhofer ISE Energy-Charts** and **aWATTar** for European EPEX Spot day-ahead electricity prices.

@@ -1,4 +1,6 @@
-# Holistic Heat Pump Operation Judgment & Optimization System (v2.0)
+# BREAST Heatpump — Holistic Operation Judgment & Optimization System (v2.0)
+
+*Bosch Reverse Engineered API Smart Tool for Heatpump (in short: BREAST Heatpump)*
 
 *Languages / Sprachen / 语言: **English** | [Deutsch](HEAT_PUMP_OPTIMIZATION_PLAN_DE.md) | [中文](HEAT_PUMP_OPTIMIZATION_PLAN_ZH.md)*
 
@@ -355,3 +357,9 @@ The UI explicitly renders the translated switch points rather than only abstract
     where $Q = 0.5\text{ h}$ ($30\text{ min}$) aligns with user slider steps and breaks down into integer multiples of $15\text{ min}$ raster slots.
   - **Thermodynamic Audit Section 5:** Exposed dynamic corridor details, quantizer step size, slot evaluation bounds, and applied duration delta in the live audit modal.
   - **Verification:** Unit tests covering targets from $2.0\text{ h}$ to $16.0\text{ h}$ and $0.5\text{ h} / 0.25\text{ h}$ quantizers. All 59 unit tests passed and verified live on device with Bosch K30 heat pump.
+- [x] **Phase 22: Electricity Tariff Compositor, Multi-Model Pricing, Post-DHW Dynamics & Android 15 UI Polish:**
+  - **Electricity Tariff Compositor:** Replaced touch sliders with direct precision decimal text inputs (`EditText`) accepting European comma `,` and standard dot `.` for Base Working Price (`Arbeitspreis`), Monthly Base Fee (`Grundpreis`), and configurable VAT (`MwSt`) with one-tap regional presets (0% Exempt, 7% Reduced, 19% DE, 20% AT).
+  - **Multi-Model Electricity Pricing:** Added support for Peak / Off-Peak (ToU HT/NT) with custom night window (e.g. 22:00 to 06:00) and weekend toggle, as well as Flat-Rate (`Festpreis`). Synthesizes 15-minute price slots so downstream MPC optimizers steer heat pump runs into low-cost hours without external API dependencies.
+  - **Post-DHW Cycle Hydraulic Dynamics & Sensor Flush:** Analyzed and documented the physical transition when the motorized 3-way diverter valve pivots from the $55^\circ\text{C}$ domestic hot water cylinder back to underfloor heating ($22^\circ\text{C}-25^\circ\text{C}$). Clarified that the observed rapid temperature drop from $55^\circ\text{C}$ to $23^\circ\text{C}$ is a primary pump sensor flush of cool floor return water, not cylinder heat loss. Documented the compressor pressure equalization dwell pause (~3 minutes) and subsequent space heating reheat triggered by HPC 410 return temperature hysteresis ($\ge 1.2\text{ K}$).
+  - **Android 15 Edge-to-Edge Theme & UI Architecture:** Eliminated default platform `ActionBarOverlayLayout` titled "BREAST Heatpump" via custom theme `@style/Theme.BreastApp` (`windowNoTitle=true`, `windowActionBar=false`) in `styles.xml` and `requestWindowFeature(Window.FEATURE_NO_TITLE)`. Added system bar and camera cutout insets (`WindowInsetsCompat.Type.displayCutout()`). Removed duplicate Settings button from dashboard, leaving single canonical `⚙ Settings` in `topNavBar`. Enforced horizontal scrolling and single-line centering on empirical model badges (`⚓ 25k Anchor Active`, `R²`, etc.) to eliminate vertical text squishing.
+  - **Verification:** Unit tests in [`BreastCoreTest.kt`](../app/src/test/java/de/breast/BreastCoreTest.kt) covering tariff configuration serialization, synthetic slot compilation, and live UI verification on Pixel 10 Pro. All 68 unit tests pass.

@@ -11,15 +11,18 @@
 
     <application
         android:allowBackup="true"
-        android:label="BREAST HeatPump"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:label="BREAST Heatpump"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        android:theme="@style/Theme.BreastApp">
 
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.BreastApp">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -39,32 +42,36 @@
 
         <activity
             android:name=".ui.HeatingCurveFullscreenActivity"
-            android:exported="true"
+            android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
 
         <activity
             android:name=".ui.SettingsActivity"
-            android:exported="true"
+            android:exported="false"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@android:style/Theme.DeviceDefault.DayNight" />
+            android:theme="@style/Theme.BreastApp" />
 
         <service
             android:name=".daemon.SpotScheduleJobService"
             android:exported="true"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
+        <!-- System boot and package update listener (restricted solely to OS events) -->
         <receiver
             android:name=".daemon.BootCompletedReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="de.breast.ACTION_SYSTEM_CRON_TICK" />
-                <action android:name="de.breast.ACTION_TELEMETRY_TICK" />
             </intent-filter>
         </receiver>
+
+        <!-- Internal AlarmManager tick receiver (unexported, blocked from outside callers) -->
+        <receiver
+            android:name=".daemon.ScheduleAlarmReceiver"
+            android:exported="false" />
 
     </application>
 

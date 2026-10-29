@@ -23,6 +23,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -33,6 +34,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -129,6 +131,8 @@ class MainActivity : ComponentActivity() {
 
     // Dashboard UI elements
     private lateinit var swipeRefreshLayout: SwipeRefreshLayout
+    private lateinit var heatPumpNameText: TextView
+    private var currentLanguage: de.breast.auth.AppLanguage = de.breast.auth.AppLanguage.EN
     private lateinit var authBadgeText: TextView
     private lateinit var bgActiveBadgeText: TextView
     private lateinit var lastSyncSubText: TextView
@@ -184,6 +188,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val dark = isSystemInDarkMode()
         palette = buildPalette(dark)
@@ -201,7 +206,7 @@ class MainActivity : ComponentActivity() {
         telemetryStore = SqliteTelemetryStore(this)
         authManager = SingleKeyAuthManager(httpClient, tokenStore)
         pointTClient = PointTApiClient(httpClient, authManager)
-        spotClient = SpotPriceClient(httpClient)
+        spotClient = SpotPriceClient(httpClient, settingsStore.buildTariffConfig())
         weatherClient = WeatherForecastClient(
             httpClient = httpClient,
             latitude = settingsStore.weatherLatitude,
@@ -214,6 +219,7 @@ class MainActivity : ComponentActivity() {
         BreastNotificationHelper.ensureChannels(this)
         requestNotificationPermissionIfNeeded()
 
+        currentLanguage = settingsStore.appLanguage
         setContentView(buildContentView())
 
         if (settingsStore.autoBackgroundEnabled) {
@@ -232,11 +238,51 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        spotClient = SpotPriceClient(httpClient, settingsStore.buildTariffConfig())
+        if (settingsStore.appLanguage != currentLanguage) {
+            currentLanguage = settingsStore.appLanguage
+            setContentView(buildContentView())
+        } else if (::heatPumpNameText.isInitialized) {
+            heatPumpNameText.text = settingsStore.heatPumpName
+        }
         if (::debugContainer.isInitialized) {
             debugContainer.visibility = if (settingsStore.debugModeEnabled) View.VISIBLE else View.GONE
         }
         refreshHeatingCurveAnalysis()
         refreshUiStatus()
+    }
+
+    private fun showEditHeatPumpNameDialog() {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
+        val input = EditText(this).apply {
+            setText(settingsStore.heatPumpName)
+            setSelection(text.length)
+            setTextColor(Color.parseColor(palette.textPrimary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            background = roundedBg(palette.inputBg, palette.inputStroke, cornerDp = 8)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            isSingleLine = true
+        }
+        val container = FrameLayout(this).apply {
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+            addView(input)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(i18n.editNameTitle)
+            .setMessage(i18n.editNamePrompt)
+            .setView(container)
+            .setPositiveButton(i18n.save) { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isNotEmpty()) {
+                    settingsStore.heatPumpName = newName
+                    if (::heatPumpNameText.isInitialized) {
+                        heatPumpNameText.text = newName
+                    }
+                }
+            }
+            .setNegativeButton(i18n.cancel, null)
+            .show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -394,10 +440,11 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // Apply window insets so soft keyboard (IME) pushes ScrollView content up instead of covering it
+        // Apply window insets for system bars (status bar, display cutout, nav bar) and soft keyboard (IME)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
-            val imeOrNav = insets.getInsets(WindowInsetsCompat.Type.ime() or WindowInsetsCompat.Type.systemBars())
-            v.setPadding(0, 0, 0, imeOrNav.bottom)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             insets
         }
 
@@ -406,37 +453,34 @@ class MainActivity : ComponentActivity() {
             setPadding(dp(16), dp(16), dp(16), dp(32))
         }
 
-        // =========================================================================
-        // TOP APP BAR WITH PROMINENT SETTINGS BUTTON
-        // =========================================================================
-        val topNavBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(12))
-        }
-        val appTitleText = TextView(this).apply {
-            text = "BREAST Heat Pump"
-            setTextColor(Color.parseColor(palette.textPrimary))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setTypeface(typeface, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        topNavBar.addView(appTitleText)
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
 
-        val topSettingsBtn = createStyledButton(
-            label = "⚙ Settings",
-            bgHex = palette.accentBlueBg,
-            strokeHex = palette.accentBlueStroke,
-            textHex = palette.accentBlue
-        ).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+        // =========================================================================
+        // 0. BREAST APP TITLE CARD
+        // =========================================================================
+        val titleCard = createCard().apply {
+            val titleCol = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
             }
+            val appTitleText = TextView(this@MainActivity).apply {
+                text = i18n.appTitle
+                setTextColor(Color.parseColor(palette.textPrimary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 21f)
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            titleCol.addView(appTitleText)
+
+            val appSubtitleText = TextView(this@MainActivity).apply {
+                text = i18n.appSubtitle
+                setTextColor(Color.parseColor(palette.accentBlue))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dp(3), 0, 0)
+            }
+            titleCol.addView(appSubtitleText)
+            addView(titleCol)
         }
-        topNavBar.addView(topSettingsBtn)
-        root.addView(topNavBar)
+        root.addView(titleCard)
 
         // =========================================================================
         // 1. HERO HEADER & CONNECTION CARD
@@ -449,59 +493,117 @@ class MainActivity : ComponentActivity() {
 
             val titleCol = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(this@MainActivity).apply {
-                    text = "Smart Heat Pump"
-                    setTextColor(Color.parseColor(palette.textPrimary))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-                    setTypeface(typeface, Typeface.BOLD)
-                })
-                addView(TextView(this@MainActivity).apply {
-                    text = "EPEX Spot DE-LU  •  Bosch K30"
-                    setTextColor(Color.parseColor(palette.textSecondary))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                    setPadding(0, dp(2), 0, 0)
-                })
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(12)
+                }
             }
+
+            val nameRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener { showEditHeatPumpNameDialog() }
+            }
+
+            heatPumpNameText = TextView(this@MainActivity).apply {
+                text = settingsStore.heatPumpName
+                setTextColor(Color.parseColor(palette.textPrimary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            nameRow.addView(heatPumpNameText)
+
+            val editPen = TextView(this@MainActivity).apply {
+                text = " ✎"
+                setTextColor(Color.parseColor(palette.accentBlue))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setPadding(dp(4), 0, dp(4), 0)
+            }
+            nameRow.addView(editPen)
+            titleCol.addView(nameRow)
+
+            val subtitleText = TextView(this@MainActivity).apply {
+                text = i18n.subtitleHeader
+                setTextColor(Color.parseColor(palette.textSecondary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(0, dp(2), 0, 0)
+            }
+            titleCol.addView(subtitleText)
             topRow.addView(titleCol)
 
             val badgesCol = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.END
+                val lp = LinearLayout.LayoutParams(
+                    dp(140),
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                layoutParams = lp
             }
 
             authBadgeText = TextView(this@MainActivity).apply {
-                text = "Checking..."
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                text = i18n.checking
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
                 setTypeface(typeface, Typeface.BOLD)
-                setPadding(dp(8), dp(4), dp(8), dp(4))
-                background = roundedBg(palette.accentBlueBg, palette.accentBlueStroke, cornerDp = 16)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = roundedBg(palette.accentBlueBg, palette.accentBlueStroke, cornerDp = 8)
                 setTextColor(Color.parseColor(palette.accentBlue))
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                isSingleLine = true
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(28)
+                )
+                layoutParams = lp
             }
             badgesCol.addView(authBadgeText)
 
             bgActiveBadgeText = TextView(this@MainActivity).apply {
                 val lp = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(28)
                 ).apply { topMargin = dp(4) }
                 layoutParams = lp
-                text = "● Background Active"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                text = i18n.bgActive
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
                 setTypeface(typeface, Typeface.BOLD)
-                setPadding(dp(8), dp(3), dp(8), dp(3))
-                background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 16)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 8)
                 setTextColor(Color.parseColor(palette.accentGreen))
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                isSingleLine = true
             }
             badgesCol.addView(bgActiveBadgeText)
+
+            val headerSettingsBtn = Button(this@MainActivity).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(28)
+                ).apply { topMargin = dp(4) }
+                layoutParams = lp
+                text = "⚙ " + i18n.settingsTitle
+                isAllCaps = false
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(dp(10), 0, dp(10), 0)
+                background = roundedBg(palette.secondaryBtnBg, palette.secondaryBtnStroke, cornerDp = 8)
+                setTextColor(Color.parseColor(palette.accentBlue))
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                stateListAnimator = null
+                elevation = 0f
+                setOnClickListener {
+                    startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+                }
+            }
+            badgesCol.addView(headerSettingsBtn)
+
             topRow.addView(badgesCol)
             addView(topRow)
 
             lastSyncSubText = TextView(this@MainActivity).apply {
-                text = "Last sync: Never"
+                text = i18n.lastSyncNever
                 setTextColor(Color.parseColor(palette.textSecondary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setPadding(0, dp(10), 0, dp(10))
+                setPadding(0, dp(10), 0, dp(4))
             }
             addView(lastSyncSubText)
 
@@ -510,39 +612,27 @@ class MainActivity : ComponentActivity() {
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                )
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
             }
 
             loginBtn = createStyledButton(
-                label = "Connect Bosch SingleKey ID",
+                label = i18n.connectSingleKey,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.secondaryBtnText
             ).apply {
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f).apply {
-                    rightMargin = dp(6)
-                }
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
                 layoutParams = lp
                 setOnClickListener { openSingleKeyWebViewDialog() }
             }
             headerBtnRow.addView(loginBtn)
-
-            val heroSettingsBtn = createStyledButton(
-                label = "⚙ Settings",
-                bgHex = palette.secondaryBtnBg,
-                strokeHex = palette.secondaryBtnStroke,
-                textHex = palette.accentBlue
-            ).apply {
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.8f).apply {
-                    leftMargin = dp(6)
-                }
-                layoutParams = lp
-                setOnClickListener {
-                    startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
-                }
-            }
-            headerBtnRow.addView(heroSettingsBtn)
             addView(headerBtnRow)
         }
         root.addView(headerCard)
@@ -551,8 +641,8 @@ class MainActivity : ComponentActivity() {
         // 2. ACTIVE SCHEDULE WINDOWS CARD (TODAY & TOMORROW)
         // =========================================================================
         val scheduleCard = createCard().apply {
-            addView(cardSectionTitle("Scheduled Lowest-Price Windows"))
-            addView(cardSubtitle("Shared single contiguous window for Space Heating (HC1) & Warm Water (DHW1)"))
+            addView(cardSectionTitle(i18n.scheduledWindowsTitle))
+            addView(cardSubtitle(i18n.scheduledWindowsSubtitle))
 
             manualAdjustmentBanner = TextView(this@MainActivity).apply {
                 text = "⚠ manual adjustment detected, no further change"
@@ -594,7 +684,7 @@ class MainActivity : ComponentActivity() {
             // Today tile
             val todayTile = createInnerTile().apply {
                 todayWindowTitle = TextView(this@MainActivity).apply {
-                    text = "TODAY"
+                    text = i18n.todayDefaultTitle
                     setTextColor(Color.parseColor(palette.accentBlue))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTypeface(typeface, Typeface.BOLD)
@@ -602,7 +692,7 @@ class MainActivity : ComponentActivity() {
                 addView(todayWindowTitle)
 
                 todayWindowBody = TextView(this@MainActivity).apply {
-                    text = "Tap 'Sync Lowest-Price Schedule Now' to compute today's window."
+                    text = i18n.todayNoSchedule
                     setTextColor(Color.parseColor(palette.textPrimary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
                     setPadding(0, dp(4), 0, 0)
@@ -610,21 +700,21 @@ class MainActivity : ComponentActivity() {
                 addView(todayWindowBody)
 
                 todayPhysicsBtn = TextView(this@MainActivity).apply {
-                    text = "🔬 View Physics & Thermodynamic Audit"
+                    text = i18n.viewAuditBtn
                     setTextColor(Color.parseColor(palette.accentBlue))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTypeface(typeface, Typeface.BOLD)
                     setPadding(0, dp(8), 0, 0)
                     visibility = View.GONE
                     setOnClickListener {
-                        showPhysicsAuditDialog("Today's Schedule Physics Audit", latestSyncState?.todayPhysicsBreakdown)
+                        showPhysicsAuditDialog(i18n.todayPhysicsAuditTitle, latestSyncState?.todayPhysicsBreakdown)
                     }
                 }
                 addView(todayPhysicsBtn)
             }
             todayTile.setOnClickListener {
                 latestSyncState?.todayPhysicsBreakdown?.let { breakdown ->
-                    showPhysicsAuditDialog("Today's Schedule Physics Audit", breakdown)
+                    showPhysicsAuditDialog(i18n.todayPhysicsAuditTitle, breakdown)
                 }
             }
             addView(todayTile)
@@ -638,7 +728,7 @@ class MainActivity : ComponentActivity() {
                 layoutParams = lp
 
                 tomorrowWindowTitle = TextView(this@MainActivity).apply {
-                    text = "TOMORROW (DAY-AHEAD)"
+                    text = i18n.tomorrowDayAheadTitle
                     setTextColor(Color.parseColor(palette.accentPurple))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTypeface(typeface, Typeface.BOLD)
@@ -646,7 +736,7 @@ class MainActivity : ComponentActivity() {
                 addView(tomorrowWindowTitle)
 
                 tomorrowWindowBody = TextView(this@MainActivity).apply {
-                    text = "Published daily between 12:00 and 15:00 CET."
+                    text = i18n.tomorrowNotice
                     setTextColor(Color.parseColor(palette.textSecondary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                     setPadding(0, dp(4), 0, 0)
@@ -654,27 +744,27 @@ class MainActivity : ComponentActivity() {
                 addView(tomorrowWindowBody)
 
                 tomorrowPhysicsBtn = TextView(this@MainActivity).apply {
-                    text = "🔬 View Physics & Thermodynamic Audit"
+                    text = i18n.viewAuditBtn
                     setTextColor(Color.parseColor(palette.accentPurple))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTypeface(typeface, Typeface.BOLD)
                     setPadding(0, dp(8), 0, 0)
                     visibility = View.GONE
                     setOnClickListener {
-                        showPhysicsAuditDialog("Tomorrow's Schedule Physics Audit", latestSyncState?.tomorrowPhysicsBreakdown)
+                        showPhysicsAuditDialog(i18n.tomorrowPhysicsAuditTitle, latestSyncState?.tomorrowPhysicsBreakdown)
                     }
                 }
                 addView(tomorrowPhysicsBtn)
             }
             tomorrowTile.setOnClickListener {
                 latestSyncState?.tomorrowPhysicsBreakdown?.let { breakdown ->
-                    showPhysicsAuditDialog("Tomorrow's Schedule Physics Audit", breakdown)
+                    showPhysicsAuditDialog(i18n.tomorrowPhysicsAuditTitle, breakdown)
                 }
             }
             addView(tomorrowTile)
 
             syncNowBtn = createStyledButton(
-                label = "Sync Lowest-Price Schedule Now",
+                label = i18n.syncScheduleBtn,
                 bgHex = palette.primaryBtnBg,
                 strokeHex = palette.primaryBtnStroke,
                 textHex = palette.primaryBtnText
@@ -692,7 +782,7 @@ class MainActivity : ComponentActivity() {
             addView(syncNowBtn)
 
             inspectScheduleBtn = createStyledButton(
-                label = "Inspect 7-Day Heat Pump Schedule",
+                label = i18n.inspectScheduleBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.secondaryBtnText
@@ -700,16 +790,19 @@ class MainActivity : ComponentActivity() {
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(8) }
+                ).apply {
+                    topMargin = dp(8)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
                 setOnClickListener {
                     if (weeklyScheduleCard.visibility == View.VISIBLE) {
                         weeklyScheduleCard.visibility = View.GONE
-                        text = "Inspect 7-Day Heat Pump Schedule"
+                        text = i18n.inspectScheduleBtn
                     } else {
                         weeklyScheduleCard.visibility = View.VISIBLE
-                        text = "Hide 7-Day Heat Pump Schedule"
-                        weeklyScheduleText.text = "Reading 7-day schedule directly from Bosch gateway..."
+                        text = i18n.hideScheduleBtn
+                        weeklyScheduleText.text = i18n.readingScheduleText
                         readCurrentHeatPumpSchedule(weeklyScheduleText)
                     }
                 }
@@ -720,12 +813,15 @@ class MainActivity : ComponentActivity() {
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(10) }
+                ).apply {
+                    topMargin = dp(10)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
                 visibility = View.GONE
 
                 val header = TextView(this@MainActivity).apply {
-                    text = "ACTIVE 7-DAY HEAT PUMP SWITCH PROGRAM"
+                    text = i18n.weeklyScheduleHeader
                     setTextColor(Color.parseColor(palette.accentGreen))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     setTypeface(typeface, Typeface.BOLD)
@@ -733,7 +829,7 @@ class MainActivity : ComponentActivity() {
                 addView(header)
 
                 weeklyScheduleText = TextView(this@MainActivity).apply {
-                    text = "Tap to inspect."
+                    text = i18n.tapToInspect
                     setTextColor(Color.parseColor(palette.textPrimary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setTypeface(Typeface.MONOSPACE)
@@ -749,17 +845,17 @@ class MainActivity : ComponentActivity() {
         // 3. SYSTEM TELEMETRY & HEATING CURVE ANALYSIS CARD
         // =========================================================================
         val telemetryCard = createCard().apply {
-            addView(cardSectionTitle("Live Telemetry & Real Heating Curve"))
-            addView(cardSubtitle("Empirical flow curve extrapolation & full-day thermal profile"))
+            addView(cardSectionTitle(i18n.telemetryTitle))
+            addView(cardSubtitle(i18n.telemetrySubtitle))
 
             // Row 1 of live readings (Outdoor, Supply, Return)
             val row1 = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, dp(4), 0, dp(6))
             }
-            telemetryOutdoorBadge = createTelemetryBadge(defaultValue = "Out: --", accentHex = palette.accentBlue)
-            telemetrySupplyBadge = createTelemetryBadge(defaultValue = "Flow: --", accentHex = palette.accentAmber)
-            telemetryReturnBadge = createTelemetryBadge(defaultValue = "Ret: --", accentHex = palette.accentPurple)
+            telemetryOutdoorBadge = createTelemetryBadge(defaultValue = String.format(i18n.badgeOutdoor, "--"), accentHex = palette.accentBlue)
+            telemetrySupplyBadge = createTelemetryBadge(defaultValue = String.format(i18n.badgeSupply, "--"), accentHex = palette.accentAmber)
+            telemetryReturnBadge = createTelemetryBadge(defaultValue = String.format(i18n.badgeReturn, "--"), accentHex = palette.accentPurple)
             row1.addView(wrapBadgeCol(telemetryOutdoorBadge))
             row1.addView(wrapBadgeCol(telemetrySupplyBadge))
             row1.addView(wrapBadgeCol(telemetryReturnBadge))
@@ -770,9 +866,9 @@ class MainActivity : ComponentActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, 0, 0, dp(10))
             }
-            telemetryDeltaBadge = createTelemetryBadge(defaultValue = "ΔT: --", accentHex = palette.accentGreen)
-            telemetryModulationBadge = createTelemetryBadge(defaultValue = "Mod: --", accentHex = palette.accentBlue)
-            telemetryDemandBadge = createTelemetryBadge(defaultValue = "Mode: --", accentHex = palette.accentAmber)
+            telemetryDeltaBadge = createTelemetryBadge(defaultValue = String.format(i18n.badgeDelta, "--"), accentHex = palette.accentGreen)
+            telemetryModulationBadge = createTelemetryBadge(defaultValue = String.format(i18n.badgeMod, "--"), accentHex = palette.accentBlue)
+            telemetryDemandBadge = createTelemetryBadge(defaultValue = String.format(i18n.badgeDemand, "--"), accentHex = palette.accentAmber)
             row2.addView(wrapBadgeCol(telemetryDeltaBadge))
             row2.addView(wrapBadgeCol(telemetryModulationBadge))
             row2.addView(wrapBadgeCol(telemetryDemandBadge))
@@ -790,7 +886,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val curveTitle = TextView(this@MainActivity).apply {
-                    text = "HEATING CURVE & OPERATING TELEMETRY (BOSCH HPC 410)"
+                    text = i18n.curveCardTitle
                     setTextColor(Color.parseColor(palette.accentBlue))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTypeface(typeface, Typeface.BOLD)
@@ -799,7 +895,7 @@ class MainActivity : ComponentActivity() {
                 curveHeaderRow.addView(curveTitle)
 
                 val fullscreenPill = TextView(this@MainActivity).apply {
-                    text = "⛶ Fullscreen"
+                    text = i18n.fullscreenBtn
                     setTextColor(Color.parseColor(palette.accentBlue))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                     setTypeface(typeface, Typeface.BOLD)
@@ -811,7 +907,7 @@ class MainActivity : ComponentActivity() {
                 addView(curveHeaderRow)
 
                 heatingCurveEquationText = TextView(this@MainActivity).apply {
-                    text = "Awaiting central heating run data points..."
+                    text = i18n.awaitingRunData
                     setTextColor(Color.parseColor(palette.textPrimary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
                     setTypeface(typeface, Typeface.BOLD)
@@ -820,7 +916,7 @@ class MainActivity : ComponentActivity() {
                 addView(heatingCurveEquationText)
 
                 heatingCurveEvaluationText = TextView(this@MainActivity).apply {
-                    text = "Collects steady-state data points when central heating runs to learn your true building heat curve and compare against Bosch documentation."
+                    text = i18n.curveEvaluationDesc
                     setTextColor(Color.parseColor(palette.textSecondary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 }
@@ -841,7 +937,7 @@ class MainActivity : ComponentActivity() {
                 addView(heatingCurveChartView)
 
                 telemetryCountText = TextView(this@MainActivity).apply {
-                    text = "0 snapshots logged in local database"
+                    text = String.format(i18n.snapshotsCountFormat, 0)
                     setTextColor(Color.parseColor(palette.textMuted))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setPadding(0, dp(6), 0, 0)
@@ -853,34 +949,42 @@ class MainActivity : ComponentActivity() {
             // Button actions row
             val actionsRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(12) }
+                ).apply {
+                    topMargin = dp(10)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
             }
 
             refreshTelemetryBtn = createStyledButton(
-                label = "Refresh Telemetry Now",
+                label = i18n.refreshTelemetryBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentBlue
             ).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    rightMargin = dp(6)
+                    rightMargin = dp(4)
                 }
                 setOnClickListener { fetchAndStoreLiveTelemetry() }
             }
             actionsRow.addView(refreshTelemetryBtn)
 
             exportTelemetryBtn = createStyledButton(
-                label = "Export CSV",
+                label = i18n.exportCsvBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentGreen
             ).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    leftMargin = dp(6)
+                    leftMargin = dp(4)
                 }
                 setOnClickListener { exportTelemetryDialog() }
             }
@@ -894,8 +998,8 @@ class MainActivity : ComponentActivity() {
         // 4. COMFORT TEMPERATURE & RUNTIME SLIDERS CARD
         // =========================================================================
         val slidersCard = createCard().apply {
-            addView(cardSectionTitle("Comfort & Runtime Controls"))
-            addView(cardSubtitle("Adjust target room comfort temperature and daily operating duration"))
+            addView(cardSectionTitle(i18n.comfortTitle))
+            addView(cardSubtitle(i18n.comfortSubtitle))
 
             // --- Temperature Slider Header ---
             val tempHeaderRow = LinearLayout(this@MainActivity).apply {
@@ -904,7 +1008,7 @@ class MainActivity : ComponentActivity() {
                 setPadding(0, dp(6), 0, dp(4))
             }
             tempHeaderRow.addView(TextView(this@MainActivity).apply {
-                text = "Heating Target Temperature"
+                text = i18n.heatingTargetLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
                 setTypeface(typeface, Typeface.BOLD)
@@ -946,7 +1050,7 @@ class MainActivity : ComponentActivity() {
             addView(tempSeekBar)
 
             addView(TextView(this@MainActivity).apply {
-                text = "Applies to Space Heating (HC1 comfort2). Setback (17°C) & Warm Water (42°C) remain untouched."
+                text = i18n.heatingTargetDesc
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setPadding(0, 0, 0, dp(14))
@@ -959,7 +1063,7 @@ class MainActivity : ComponentActivity() {
                 setPadding(0, dp(4), 0, dp(4))
             }
             durHeaderRow.addView(TextView(this@MainActivity).apply {
-                text = "Target Daily Runtime"
+                text = i18n.runtimeTargetLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
                 setTypeface(typeface, Typeface.BOLD)
@@ -1006,8 +1110,8 @@ class MainActivity : ComponentActivity() {
         // 4. OPERATING BUDGET & HEAT PUMP POWER
         // =========================================================================
         val budgetCard = createCard().apply {
-            addView(cardSectionTitle("Daily Budget & Heat Pump Power"))
-            addView(cardSubtitle("Economic constraints and electrical power consumption for cost calculation"))
+            addView(cardSectionTitle(i18n.budgetTitle))
+            addView(cardSubtitle(i18n.budgetSubtitle))
 
             val inputsRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1021,13 +1125,13 @@ class MainActivity : ComponentActivity() {
                     rightMargin = dp(8)
                 }
                 addView(TextView(this@MainActivity).apply {
-                    text = "Daily Budget (€/day)"
+                    text = i18n.dailyBudgetLabel
                     setTextColor(Color.parseColor(palette.textSecondary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setPadding(0, 0, 0, dp(4))
                 })
                 budgetInput = createStyledEditText(
-                    hintText = "No limit",
+                    hintText = i18n.noLimit,
                     initialText = settingsStore.dailyBudgetEuro?.let { String.format("%.2f", it) }.orEmpty()
                 ).apply {
                     addTextChangedListener(object : TextWatcher {
@@ -1060,13 +1164,13 @@ class MainActivity : ComponentActivity() {
                     leftMargin = dp(8)
                 }
                 addView(TextView(this@MainActivity).apply {
-                    text = "Power Model / Draw (kW)"
+                    text = i18n.powerModelLabel
                     setTextColor(Color.parseColor(palette.textSecondary))
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setPadding(0, 0, 0, dp(4))
                 })
                 powerInput = createStyledEditText(
-                    hintText = "Auto (~0.6kW)",
+                    hintText = i18n.powerHint,
                     initialText = if (settingsStore.autoPowerModulationEnabled) "" else String.format(java.util.Locale.US, "%.1f", settingsStore.estimatedPowerKw)
                 ).apply {
                     addTextChangedListener(object : TextWatcher {
@@ -1094,7 +1198,7 @@ class MainActivity : ComponentActivity() {
             addView(inputsRow)
 
             val budgetExplanationText = TextView(this@MainActivity).apply {
-                text = "• Hard Budget Cap: If set, the optimizer restricts runtime so daily electricity spend never exceeds this limit.\n• Avg Power Draw: Used to multiply dynamic spot tariff rates (€/kWh) into actual daily euro expenditure."
+                text = i18n.budgetExplanation
                 setTextColor(Color.parseColor(palette.textMuted))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setPadding(0, 0, 0, dp(4))
@@ -1107,11 +1211,11 @@ class MainActivity : ComponentActivity() {
         // 5. BACKGROUND AUTOMATION & SPOT PRICE SYNC
         // =========================================================================
         val automationCard = createCard().apply {
-            addView(cardSectionTitle("Background Automation & EPEX Spot Sync"))
-            addView(cardSubtitle("Hourly daemon pulls EPEX spot prices (12:00–15:00 CET) and pushes schedules"))
+            addView(cardSectionTitle(i18n.autoTitle))
+            addView(cardSubtitle(i18n.autoSubtitle))
 
             bgSwitch = Switch(this@MainActivity).apply {
-                text = "Automatic Background Sync (Hourly)"
+                text = i18n.autoSwitchLabel
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 isChecked = settingsStore.autoBackgroundEnabled
@@ -1141,11 +1245,19 @@ class MainActivity : ComponentActivity() {
             addView(cronStatusText)
 
             batteryBtn = createStyledButton(
-                label = "Grant Unrestricted Battery (Recommended)",
+                label = i18n.reqBatteryBtn,
                 bgHex = palette.accentAmberBg,
                 strokeHex = palette.accentAmberStroke,
                 textHex = palette.accentAmber
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(8)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 setOnClickListener { requestIgnoreBatteryOptimizations() }
             }
             addView(batteryBtn)
@@ -1158,15 +1270,22 @@ class MainActivity : ComponentActivity() {
         debugContainer = createCard().apply {
             visibility = if (settingsStore.debugModeEnabled) View.VISIBLE else View.GONE
 
-            addView(cardSectionTitle("🛠️ Diagnostic Console"))
-            addView(cardSubtitle("Live SingleKey ID communication & daemon schedule logs"))
+            addView(cardSectionTitle(i18n.devCardTitle))
+            addView(cardSubtitle(i18n.devCardSubtitle))
 
             val readScheduleBtn = createStyledButton(
-                label = "Inspect Raw Heat Pump Schedule & Endpoints",
+                label = i18n.inspectRawScheduleBtn,
                 bgHex = palette.secondaryBtnBg,
                 strokeHex = palette.secondaryBtnStroke,
                 textHex = palette.accentBlue
             ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
                 setOnClickListener { readCurrentHeatPumpSchedule() }
             }
             addView(readScheduleBtn)
@@ -1175,7 +1294,10 @@ class MainActivity : ComponentActivity() {
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(10) }
+                ).apply {
+                    topMargin = dp(10)
+                    bottomMargin = dp(6)
+                }
                 layoutParams = lp
                 typeface = Typeface.MONOSPACE
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
@@ -1248,36 +1370,42 @@ class MainActivity : ComponentActivity() {
             val tokens = tokenStore.loadTokens()
             val syncState = stateStore.loadState()
 
+            val i18n = BreastI18n.get(settingsStore.appLanguage)
+
             if (tokens != null) {
-                authBadgeText.text = "● Connected"
+                authBadgeText.text = i18n.connected
                 authBadgeText.setTextColor(Color.parseColor(palette.accentGreen))
-                authBadgeText.background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 20)
-                loginBtn.text = "Reconnect Bosch SingleKey ID"
+                authBadgeText.background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 8)
+                loginBtn.text = i18n.reconnectSingleKey
             } else {
-                authBadgeText.text = "● Login Needed"
+                authBadgeText.text = i18n.loginNeeded
                 authBadgeText.setTextColor(Color.parseColor(palette.accentAmber))
-                authBadgeText.background = roundedBg(palette.accentAmberBg, palette.accentAmberStroke, cornerDp = 20)
-                loginBtn.text = "Sign In with Bosch SingleKey ID"
+                authBadgeText.background = roundedBg(palette.accentAmberBg, palette.accentAmberStroke, cornerDp = 8)
+                loginBtn.text = i18n.connectSingleKey
             }
+            authBadgeText.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            authBadgeText.setPadding(dp(10), dp(4), dp(10), dp(4))
 
             val bgRunning = settingsStore.autoBackgroundEnabled || settingsStore.telemetryCollectionEnabled
             if (bgRunning) {
-                bgActiveBadgeText.text = "● Background Active"
+                bgActiveBadgeText.text = i18n.bgActive
                 bgActiveBadgeText.setTextColor(Color.parseColor(palette.accentGreen))
-                bgActiveBadgeText.background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 16)
+                bgActiveBadgeText.background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 8)
                 BreastNotificationHelper.updateBackgroundActiveNotification(this@MainActivity)
             } else {
-                bgActiveBadgeText.text = "○ Background Off"
+                bgActiveBadgeText.text = i18n.bgInactive
                 bgActiveBadgeText.setTextColor(Color.parseColor(palette.textMuted))
-                bgActiveBadgeText.background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 16)
+                bgActiveBadgeText.background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
                 BreastNotificationHelper.clearBackgroundActiveNotification(this@MainActivity)
             }
+            bgActiveBadgeText.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            bgActiveBadgeText.setPadding(dp(10), dp(4), dp(10), dp(4))
 
             val lastSyncFormatted = syncState.lastSyncTimestampIso
                 ?.replace("T", " ")
                 ?.substringBefore("+")
                 ?.substringBefore(".")
-                ?: "Never"
+                ?: i18n.lastSyncNever
 
             val currentSetpoint = sliderModel.snappedTempC
             val appliedSetpoint = syncState.lastAppliedSliderTempC
@@ -1285,9 +1413,9 @@ class MainActivity : ComponentActivity() {
 
             if (syncState.manualAdjustmentDetected) {
                 manualAdjustmentBanner.visibility = View.VISIBLE
-                val hint = syncState.manualAdjustmentHint ?: "manual adjustment detected, no further change"
-                manualAdjustmentBanner.text = "⚠ $hint\n(Heat pump schedule was modified on the controller. Auto-sync is paused so your manual settings are preserved. Tap 'Sync Lowest-Price Schedule Now' to override and re-enable auto-sync)."
-                lastSyncSubText.text = "Last schedule sync: $lastSyncFormatted  •  ⚠ $hint"
+                val hint = syncState.manualAdjustmentHint ?: i18n.manualAdjustmentDetected
+                manualAdjustmentBanner.text = "⚠ $hint\n(${i18n.manualAdjustmentDetail})"
+                lastSyncSubText.text = "${String.format(i18n.lastSyncPrefix, lastSyncFormatted)}  •  ⚠ $hint"
             } else if (setpointModified && (syncState.lastSyncedTodayDate != null || syncState.lastSyncedTomorrowDate != null)) {
                 manualAdjustmentBanner.visibility = View.VISIBLE
                 manualAdjustmentBanner.text = "ℹ Schedule manually modified (Target: ${currentSetpoint}°C vs applied ${appliedSetpoint}°C). Press 'Sync' again twice to overwrite."
@@ -1296,35 +1424,42 @@ class MainActivity : ComponentActivity() {
                 if (overwriteConfirmTaps == 0) {
                     manualAdjustmentBanner.visibility = View.GONE
                 }
-                lastSyncSubText.text = "Last schedule sync: $lastSyncFormatted"
+                lastSyncSubText.text = String.format(i18n.lastSyncPrefix, lastSyncFormatted)
             }
 
             // Populate Today & Tomorrow visual schedule cards
             if (settingsStore.holisticOptimizationEnabled) {
                 val pref = de.breast.optimizer.OptimizationPreference.fromId(settingsStore.optimizationPreference)
+                val prefStr = when (pref) {
+                    de.breast.optimizer.OptimizationPreference.COMFORT -> i18n.modeComfort
+                    de.breast.optimizer.OptimizationPreference.BALANCED -> i18n.modeBalanced
+                    de.breast.optimizer.OptimizationPreference.EFFICIENCY -> i18n.modeEfficiency
+                    de.breast.optimizer.OptimizationPreference.BUDGET -> i18n.modeBudget
+                }
                 optimizationModeBadge.visibility = View.VISIBLE
-                optimizationModeBadge.text = "OPTIMIZATION MODE: ${pref.title.uppercase()} (${pref.subtitle.substringBefore(" — ")})"
+                optimizationModeBadge.text = String.format(i18n.optModePrefix, prefStr)
             } else {
                 optimizationModeBadge.visibility = View.GONE
             }
 
             todayWindowTitle.text = if (syncState.lastSyncedTodayDate != null) {
-                val setpointStr = syncState.lastAppliedSliderTempC?.let { " • Target: ${it}°C" } ?: ""
-                "TODAY (${syncState.lastSyncedTodayDate})  •  APPLIED SCHEDULE$setpointStr"
+                val setpointStr = syncState.lastAppliedSliderTempC?.let { "${it}°C" } ?: "--"
+                String.format(i18n.todayAppliedTitle, syncState.lastSyncedTodayDate, setpointStr)
             } else {
-                "TODAY'S SCHEDULE"
+                i18n.todayDefaultTitle
             }
-            todayWindowBody.text = syncState.todayWindowSummary
-                ?: "No schedule synced yet today. Tap 'Sync Lowest-Price Schedule Now'."
+            todayWindowBody.text = syncState.todayWindowSummary?.let {
+                BreastI18n.localizePlanSummary(it, settingsStore.appLanguage)
+            } ?: i18n.todayNoSchedule
 
             tomorrowWindowTitle.text = if (syncState.lastSyncedTomorrowDate != null) {
-                val setpointStr = syncState.lastAppliedSliderTempC?.let { " • Target: ${it}°C" } ?: ""
-                "TOMORROW (${syncState.lastSyncedTomorrowDate})  •  APPLIED SCHEDULE$setpointStr"
+                String.format(i18n.tomorrowScheduledTitle, syncState.lastSyncedTomorrowDate)
             } else {
-                "TOMORROW (DAY-AHEAD)"
+                i18n.tomorrowDayAheadTitle
             }
-            tomorrowWindowBody.text = syncState.tomorrowWindowSummary
-                ?: "Spot prices publish daily between 12:00 and 15:00 CET. Auto-sync will push automatically."
+            tomorrowWindowBody.text = syncState.tomorrowWindowSummary?.let {
+                BreastI18n.localizePlanSummary(it, settingsStore.appLanguage)
+            } ?: i18n.tomorrowNotice
 
             latestSyncState = syncState
             todayPhysicsBtn.visibility = if (!syncState.todayPhysicsBreakdown.isNullOrBlank()) View.VISIBLE else View.GONE
@@ -1332,8 +1467,9 @@ class MainActivity : ComponentActivity() {
 
             val jobActive = SpotScheduleJobService.isHourlyJobScheduled(this@MainActivity)
             val batteryUnrestricted = isIgnoringBatteryOptimizations()
-            cronStatusText.text = "Hourly Cron: ${if (jobActive) "Active" else "Paused"}  •  " +
-                "Battery: ${if (batteryUnrestricted) "Unrestricted (Optimal)" else "Optimized (May delay background sync)"}"
+            val jobStr = if (jobActive) i18n.cronActive else i18n.cronPaused
+            val batStr = if (batteryUnrestricted) i18n.batteryUnrestricted else i18n.batteryOptimized
+            cronStatusText.text = String.format(i18n.cronStatusFormat, jobStr, batStr)
             batteryBtn.visibility = if (batteryUnrestricted) View.GONE else View.VISIBLE
 
             if (!syncState.lastRunLog.isNullOrBlank()) {
@@ -1345,19 +1481,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showPhysicsAuditDialog(title: String, breakdown: String?) {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
         if (breakdown.isNullOrBlank()) {
             AlertDialog.Builder(this)
                 .setTitle(title)
-                .setMessage("No physical breakdown available yet. Tap 'Sync Lowest-Price Schedule Now' to generate.")
-                .setPositiveButton("OK", null)
+                .setMessage(i18n.noPhysicsAuditMessage)
+                .setPositiveButton(i18n.close, null)
                 .show()
             return
         }
 
+        val localizedBreakdown = BreastI18n.localizePhysicsAudit(breakdown, settingsStore.appLanguage)
+
         val scroll = ScrollView(this).apply {
             setPadding(dp(20), dp(16), dp(20), dp(16))
             val tv = TextView(this@MainActivity).apply {
-                text = breakdown
+                text = localizedBreakdown
                 setTextColor(Color.parseColor(palette.textPrimary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 typeface = Typeface.MONOSPACE
@@ -1369,7 +1508,7 @@ class MainActivity : ComponentActivity() {
         AlertDialog.Builder(this)
             .setTitle(title)
             .setView(scroll)
-            .setPositiveButton("Close", null)
+            .setPositiveButton(i18n.close, null)
             .show()
     }
 
@@ -1405,7 +1544,9 @@ class MainActivity : ComponentActivity() {
                 var latestSnap: HeatPumpTelemetrySnapshot? = null
                 if (tokens != null) {
                     runCatching {
-                        val gwId = pointTClient.getGateways().firstOrNull()?.deviceId ?: "101845229"
+                        val gw = pointTClient.getGateways().firstOrNull()
+                            ?: throw IllegalStateException("No registered Bosch/Buderus gateway found on this account")
+                        val gwId = gw.deviceId
                         val snap = pointTClient.getHeatPumpTelemetry(gatewayId = gwId)
                         telemetryStore.recordSnapshot(snap)
                         latestSnap = snap
@@ -1482,7 +1623,9 @@ class MainActivity : ComponentActivity() {
             refreshTelemetryBtn.isEnabled = false
             refreshTelemetryBtn.text = "Fetching..."
             runCatching {
-                val gwId = pointTClient.getGateways().firstOrNull()?.deviceId ?: "101845229"
+                val gw = pointTClient.getGateways().firstOrNull()
+                    ?: throw IllegalStateException("No registered Bosch/Buderus gateway found on this account")
+                val gwId = gw.deviceId
                 val snap = pointTClient.getHeatPumpTelemetry(gatewayId = gwId)
                 telemetryStore.recordSnapshot(snap)
                 updateTelemetryUi(snap)
@@ -1492,20 +1635,16 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this@MainActivity, "Telemetry failed: ${err.message}", Toast.LENGTH_LONG).show()
             }
             refreshTelemetryBtn.isEnabled = true
-            refreshTelemetryBtn.text = "Refresh Telemetry Now"
+            val i18n = BreastI18n.get(settingsStore.appLanguage)
+            refreshTelemetryBtn.text = i18n.refreshTelemetryBtn
         }
     }
 
     private fun refreshHeatingCurveAnalysis() {
         lifecycleScope.launch {
+            val i18n = BreastI18n.get(settingsStore.appLanguage)
             val count = telemetryStore.getSnapshotCount()
-            val statusSuffix = if (settingsStore.telemetryCollectionEnabled) {
-                val m = settingsStore.telemetryIntervalMinutes
-                "● Logging (${if (m == 1) "1 min" else if (m == 60) "1 hr" else "${m}m"})"
-            } else {
-                "○ Paused (Dev Mode)"
-            }
-            telemetryCountText.text = "$count snapshots logged  •  $statusSuffix"
+            telemetryCountText.text = String.format(i18n.snapshotsCountFormat, count)
 
             val snapshots = telemetryStore.getRecentSnapshots(limit = 1000)
             val latest = snapshots.lastOrNull()
@@ -1547,48 +1686,52 @@ class MainActivity : ComponentActivity() {
             if (settingsStore.chartShowHpc4) activeCurves.add("HPC[4] 35° FBH")
             if (settingsStore.chartShowHpc5) activeCurves.add("HPC[5] 60° Rad")
             val curvesHeader = if (activeCurves.isEmpty()) "Bosch HPC 410 Curves" else activeCurves.joinToString(", ")
-            val shiftStr = if (settingsStore.chartParallelShiftK != 0.0) String.format(" (Shift +%.1f K)", settingsStore.chartParallelShiftK) else " (+0 K Base)"
+            val shiftStr = if (settingsStore.chartParallelShiftK != 0.0) String.format(i18n.telemetryShiftKFormat, settingsStore.chartParallelShiftK) else i18n.telemetryShiftBase
 
             if (analysis != null) {
                 heatingCurveEquationText.text = "$curvesHeader$shiftStr"
                 val coolingText = analysis.hourlyCoolingRateC?.let {
-                    String.format("  •  Thermal decay: -%.2f °C/h", it)
+                    String.format(i18n.telemetryThermalDecayFormat, it)
                 } ?: ""
                 val warmupText = analysis.estimatedWarmupMinutes?.let {
-                    String.format("  •  Warm-up ramp: ~%.0f min", it)
+                    String.format(i18n.telemetryWarmupRampFormat, it)
                 } ?: ""
                 val filterText = if (analysis.transientSampleCount > 0) {
-                    String.format("Telemetry: %d equilibrium pts (%d warm-up ramp pts excluded)",
+                    String.format(i18n.telemetryEquilibriumFormat,
                         analysis.steadyStateSampleCount, analysis.transientSampleCount)
                 } else {
-                    String.format("Telemetry: %d steady-state points", analysis.sampleCount)
+                    String.format(i18n.telemetrySteadyStateFormat, analysis.sampleCount)
                 }
+                val localizedSummary = BreastI18n.localizeCurveSummary(analysis.evaluationSummary, settingsStore.appLanguage)
                 heatingCurveEvaluationText.text = String.format(
-                    "%s\n%s  •  Avg Heating ΔT: %.1f K%s%s",
-                    analysis.evaluationSummary,
+                    "%s\n%s  •  %s%s%s",
+                    localizedSummary,
                     filterText,
-                    analysis.avgHeatingDeltaT,
+                    String.format(i18n.telemetryAvgDeltaTFormat, analysis.avgHeatingDeltaT),
                     coolingText,
                     warmupText
                 )
             } else {
-                heatingCurveEquationText.text = if (count > 0) "$curvesHeader$shiftStr ($count logged)" else "Awaiting central heating run data points..."
-                heatingCurveEvaluationText.text = "Plots real operating telemetry directly against Bosch HPC 410 factory heating curves (Bild 2 & 4). Tap chart or Fullscreen to customize overlays."
+                val loggedStr = if (count > 0) String.format(i18n.telemetryLoggedCountFormat, count) else ""
+                heatingCurveEquationText.text = if (count > 0) "$curvesHeader$shiftStr$loggedStr" else i18n.awaitingRunData
+                heatingCurveEvaluationText.text = i18n.telemetryDefaultDesc
             }
         }
     }
 
     private fun updateTelemetryUi(snap: HeatPumpTelemetrySnapshot) {
-        telemetryOutdoorBadge.text = snap.outdoorTempC?.let { String.format("Out: %.1f°C", it) } ?: "Out: --"
-        telemetrySupplyBadge.text = snap.supplyTempC?.let { String.format("Flow: %.1f°C", it) } ?: "Flow: --"
-        telemetryReturnBadge.text = snap.returnTempC?.let { String.format("Ret: %.1f°C", it) } ?: "Ret: --"
-        telemetryDeltaBadge.text = snap.deltaTempC?.let { String.format("ΔT: %.1fK", it) } ?: "ΔT: --"
-        telemetryModulationBadge.text = snap.modulationPct?.let { String.format("Mod: %.0f%%", it) } ?: "Mod: 0%"
-        telemetryDemandBadge.text = when {
-            snap.isDhwActive -> "DHW"
-            snap.isHeatingActive -> "Heating"
-            else -> "Idle"
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
+        telemetryOutdoorBadge.text = snap.outdoorTempC?.let { String.format(i18n.badgeOutdoor, String.format(java.util.Locale.US, "%.1f°C", it)) } ?: String.format(i18n.badgeOutdoor, "--")
+        telemetrySupplyBadge.text = snap.supplyTempC?.let { String.format(i18n.badgeSupply, String.format(java.util.Locale.US, "%.1f°C", it)) } ?: String.format(i18n.badgeSupply, "--")
+        telemetryReturnBadge.text = snap.returnTempC?.let { String.format(i18n.badgeReturn, String.format(java.util.Locale.US, "%.1f°C", it)) } ?: String.format(i18n.badgeReturn, "--")
+        telemetryDeltaBadge.text = snap.deltaTempC?.let { String.format(i18n.badgeDelta, String.format(java.util.Locale.US, "%.1fK", it)) } ?: String.format(i18n.badgeDelta, "--")
+        telemetryModulationBadge.text = snap.modulationPct?.let { String.format(i18n.badgeMod, String.format(java.util.Locale.US, "%.0f%%", it)) } ?: String.format(i18n.badgeMod, "0%")
+        val modeStr = when {
+            snap.isDhwActive -> i18n.modeDhw
+            snap.isHeatingActive -> i18n.modeHeating
+            else -> i18n.modeIdle
         }
+        telemetryDemandBadge.text = String.format(i18n.badgeDemand, modeStr)
         if (::heatingCurveChartView.isInitialized) {
             heatingCurveChartView.currentOutdoorTempC = snap.outdoorTempC
             heatingCurveChartView.currentSupplyTempC = snap.supplyTempC
@@ -1739,15 +1882,16 @@ class MainActivity : ComponentActivity() {
             val hasAppliedSchedule = (state.lastSyncedTodayDate != null || state.lastSyncedTomorrowDate != null) && appliedSetpoint != null
             val setpointModified = appliedSetpoint != null && Math.abs(currentSetpoint - appliedSetpoint) >= 0.1
             val isManuallyModified = setpointModified || state.manualAdjustmentDetected
+            val i18n = BreastI18n.get(settingsStore.appLanguage)
 
             if (hasAppliedSchedule && isManuallyModified) {
                 when (overwriteConfirmTaps) {
                     0 -> {
                         overwriteConfirmTaps = 1
-                        val hintMsg = "Schedule manually modified, press the button again twice to overwrite the value"
+                        val hintMsg = i18n.overwriteHintTwice
                         manualAdjustmentBanner.visibility = View.VISIBLE
                         manualAdjustmentBanner.text = "⚠ $hintMsg\n(Applied schedule setpoint was ${appliedSetpoint}°C, current is ${currentSetpoint}°C)"
-                        syncNowBtn.text = "Press again twice to overwrite (2 remaining)"
+                        syncNowBtn.text = i18n.overwriteBtnTwice
                         syncNowBtn.setTextColor(Color.parseColor(palette.accentAmber))
                         syncNowBtn.background = roundedBg(palette.accentAmberBg, palette.accentAmberStroke, cornerDp = 8)
                         Toast.makeText(this@MainActivity, hintMsg, Toast.LENGTH_LONG).show()
@@ -1760,10 +1904,10 @@ class MainActivity : ComponentActivity() {
                     }
                     1 -> {
                         overwriteConfirmTaps = 2
-                        val hintMsg = "Schedule manually modified, press once more to overwrite the value"
+                        val hintMsg = i18n.overwriteHintOnce
                         manualAdjustmentBanner.visibility = View.VISIBLE
                         manualAdjustmentBanner.text = "⚠ $hintMsg"
-                        syncNowBtn.text = "Press once more to overwrite (1 remaining)"
+                        syncNowBtn.text = i18n.overwriteBtnOnce
                         Toast.makeText(this@MainActivity, hintMsg, Toast.LENGTH_SHORT).show()
 
                         overwriteResetJob?.cancel()
@@ -1776,7 +1920,7 @@ class MainActivity : ComponentActivity() {
                         // User pressed again twice: overwrite confirmed!
                         resetOverwriteConfirmation()
                         manualAdjustmentBanner.visibility = View.GONE
-                        Toast.makeText(this@MainActivity, "Overwriting schedule with ${currentSetpoint}°C...", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, String.format(i18n.overwritingToast, currentSetpoint.toString()), Toast.LENGTH_SHORT).show()
                         runManualScheduleSync(forcePush = true)
                     }
                 }
@@ -1788,10 +1932,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun resetOverwriteConfirmation() {
+        val i18n = BreastI18n.get(settingsStore.appLanguage)
         overwriteConfirmTaps = 0
         overwriteResetJob?.cancel()
         overwriteResetJob = null
-        syncNowBtn.text = "Sync Lowest-Price Schedule Now"
+        syncNowBtn.text = i18n.syncScheduleBtn
         syncNowBtn.setTextColor(Color.parseColor(palette.primaryBtnText))
         syncNowBtn.background = roundedBg(palette.primaryBtnBg, palette.primaryBtnStroke, cornerDp = 8)
     }
@@ -1836,7 +1981,8 @@ class MainActivity : ComponentActivity() {
             )
 
             syncNowBtn.isEnabled = false
-            syncNowBtn.text = "Syncing Schedule with Heat Pump..."
+            val i18n = BreastI18n.get(settingsStore.appLanguage)
+            syncNowBtn.text = i18n.syncingScheduleToast
 
             val prefNote = holisticConfig?.preference?.title?.let { " [$it]" } ?: ""
             appendLog(
@@ -1932,7 +2078,7 @@ class MainActivity : ComponentActivity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(palette.cardBg, palette.cardStroke, cornerDp = 16)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setPadding(dp(16), dp(16), dp(16), dp(22))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1946,7 +2092,7 @@ class MainActivity : ComponentActivity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedBg(palette.tileBg, palette.tileStroke, cornerDp = 12)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(14), dp(12), dp(14), dp(14))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1986,6 +2132,8 @@ class MainActivity : ComponentActivity() {
             setTypeface(typeface, Typeface.BOLD)
             background = roundedBg(bgHex, strokeHex, cornerDp = 12)
             setPadding(dp(14), dp(10), dp(14), dp(10))
+            stateListAnimator = null
+            elevation = 0f
         }
     }
 
