@@ -1,0 +1,187 @@
+[
+    {
+        "Path":  "/heatSources/actualModulation",
+        "Ok":  true,
+        "Data":  {
+                     "id":  "/heatSources/actualModulation",
+                     "type":  "floatValue",
+                     "writeable":  0,
+                     "value":  38.0,
+                     "unitOfMeasure":  "%"
+                 }
+    },
+    {
+        "Path":  "/heatSources/electricityConsumption",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/emon",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/nominalCHPower",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/compressor",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/eHeater",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/additionalHeater",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/outdoorType",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/indoorType",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/pumpCirculationSpeed",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/heatSources/sensors",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/system/sensors/temperatures/outdoor_t1",
+        "Ok":  true,
+        "Data":  {
+                     "id":  "/system/sensors/temperatures/outdoor_t1",
+                     "type":  "floatValue",
+                     "writeable":  0,
+                     "value":  10.5,
+                     "unitOfMeasure":  "C",
+                     "state":  [
+                                   {
+                                       "short":  32767.0
+                                   },
+                                   {
+                                       "open":  -32768.0
+                                   }
+                               ]
+                 }
+    },
+    {
+        "Path":  "/recordings/heatSources/emon/ch",
+        "Ok":  true,
+        "Data":  {
+                     "id":  "/recordings/heatSources/emon/ch",
+                     "type":  "refEnum",
+                     "references":  [
+                                        {
+                                            "id":  "/recordings/heatSources/emon/ch/compressor",
+                                            "uri":  "http://k30/recordings/heatSources/emon/ch/compressor"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/ch/eheater",
+                                            "uri":  "http://k30/recordings/heatSources/emon/ch/eheater"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/ch/numberOfStarts",
+                                            "uri":  "http://k30/recordings/heatSources/emon/ch/numberOfStarts"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/ch/outputProduced",
+                                            "uri":  "http://k30/recordings/heatSources/emon/ch/outputProduced"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/ch/workingTime",
+                                            "uri":  "http://k30/recordings/heatSources/emon/ch/workingTime"
+                                        }
+                                    ]
+                 }
+    },
+    {
+        "Path":  "/recordings/heatSources/emon/dhw",
+        "Ok":  true,
+        "Data":  {
+                     "id":  "/recordings/heatSources/emon/dhw",
+                     "type":  "refEnum",
+                     "references":  [
+                                        {
+                                            "id":  "/recordings/heatSources/emon/dhw/compressor",
+                                            "uri":  "http://k30/recordings/heatSources/emon/dhw/compressor"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/dhw/eheater",
+                                            "uri":  "http://k30/recordings/heatSources/emon/dhw/eheater"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/dhw/numberOfStarts",
+                                            "uri":  "http://k30/recordings/heatSources/emon/dhw/numberOfStarts"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/dhw/outputProduced",
+                                            "uri":  "http://k30/recordings/heatSources/emon/dhw/outputProduced"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/dhw/workingTime",
+                                            "uri":  "http://k30/recordings/heatSources/emon/dhw/workingTime"
+                                        }
+                                    ]
+                 }
+    },
+    {
+        "Path":  "/recordings/heatSources/emon/total",
+        "Ok":  true,
+        "Data":  {
+                     "id":  "/recordings/heatSources/emon/total",
+                     "type":  "refEnum",
+                     "references":  [
+                                        {
+                                            "id":  "/recordings/heatSources/emon/total/compressor",
+                                            "uri":  "http://k30/recordings/heatSources/emon/total/compressor"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/total/eheater",
+                                            "uri":  "http://k30/recordings/heatSources/emon/total/eheater"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/total/numberOfStarts",
+                                            "uri":  "http://k30/recordings/heatSources/emon/total/numberOfStarts"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/total/outputProduced",
+                                            "uri":  "http://k30/recordings/heatSources/emon/total/outputProduced"
+                                        },
+                                        {
+                                            "id":  "/recordings/heatSources/emon/total/workingTime",
+                                            "uri":  "http://k30/recordings/heatSources/emon/total/workingTime"
+                                        }
+                                    ]
+                 }
+    },
+    {
+        "Path":  "/recordings/heatSources/actualSupplyTemperature",
+        "Ok":  false,
+        "HttpCode":  400
+    },
+    {
+        "Path":  "/recordings/heatingCircuits/hc1",
+        "Ok":  false,
+        "HttpCode":  403
+    },
+    {
+        "Path":  "/recordings/dhwCircuits/dhw1",
+        "Ok":  false,
+        "HttpCode":  403
+    }
+]

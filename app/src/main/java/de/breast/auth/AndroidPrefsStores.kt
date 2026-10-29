@@ -4,7 +4,10 @@ import android.content.Context
 import de.breast.daemon.ScheduleStateStore
 import de.breast.daemon.ScheduleSyncState
 import de.breast.optimizer.HeatingTemperatureSlider
+import de.breast.optimizer.HolisticOptimizationConfig
+import de.breast.optimizer.OptimizationPreference
 import de.breast.optimizer.SwitchScheduleConfig
+import de.breast.spot.SpotPriceSource
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -52,10 +55,12 @@ class AndroidPrefsScheduleStateStore(context: Context) : ScheduleStateStore {
     }
 }
 
-class UserSettingsStore(context: Context) {
+class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParametersStore {
     private val prefs = context.applicationContext.getSharedPreferences("breast_user_settings", Context.MODE_PRIVATE)
 
-    var sliderTempC: Double
+    override val baseBuildingLossKwPerK: Double get() = buildingLossKwPerK
+
+    override var sliderTempC: Double
         get() = prefs.getFloat("slider_temp_c", 21.5f).toDouble()
         set(value) = prefs.edit().putFloat("slider_temp_c", value.toFloat()).apply()
 
@@ -76,9 +81,92 @@ class UserSettingsStore(context: Context) {
             }
         }
 
+    var autoPowerModulationEnabled: Boolean
+        get() = prefs.getBoolean("auto_power_modulation_enabled", true)
+        set(value) = prefs.edit().putBoolean("auto_power_modulation_enabled", value).apply()
+
+    var groundTruthModulationEnabled: Boolean
+        get() = prefs.getBoolean("ground_truth_modulation_enabled", true)
+        set(value) = prefs.edit().putBoolean("ground_truth_modulation_enabled", value).apply()
+
+    var calibratedModulationAt10C: Double
+        get() = prefs.getFloat("calibrated_mod_at_10c", 42.0f).toDouble()
+        set(value) = prefs.edit().putFloat("calibrated_mod_at_10c", value.toFloat()).apply()
+
+    var calibratedModulationSlopePerK: Double
+        get() = prefs.getFloat("calibrated_mod_slope_per_k", 5.0f).toDouble()
+        set(value) = prefs.edit().putFloat("calibrated_mod_slope_per_k", value.toFloat()).apply()
+
+    /**
+     * Long-term 25k Historical Modulation Baseline Anchor:
+     * Stores the cumulative weighted average of modulation parameters across past 25,000-datapoint epochs.
+     * Incorporates historical learning into new incoming telemetry batches without expanding memory bounds.
+     */
+    var historicalModulation25kAt10C: Double
+        get() = prefs.getFloat("hist_mod_25k_at_10c", 42.0f).toDouble()
+        set(value) = prefs.edit().putFloat("hist_mod_25k_at_10c", value.toFloat()).apply()
+
+    var historicalModulation25kSlopePerK: Double
+        get() = prefs.getFloat("hist_mod_25k_slope_per_k", 3.5f).toDouble()
+        set(value) = prefs.edit().putFloat("hist_mod_25k_slope_per_k", value.toFloat()).apply()
+
+    var historicalModulation25kWeight: Int
+        get() = prefs.getInt("hist_mod_25k_weight", 0)
+        set(value) = prefs.edit().putInt("hist_mod_25k_weight", value.coerceIn(0, 25000)).apply()
+
+    var historicalHeatLoss25kWPerK: Int
+        get() = prefs.getInt("hist_heat_loss_25k_w_per_k", 132)
+        set(value) = prefs.edit().putInt("hist_heat_loss_25k_w_per_k", value.coerceIn(50, 400)).apply()
+
+    var historicalHeatLoss25kWeight: Double
+        get() = prefs.getFloat("hist_heat_loss_25k_weight", 0.0f).toDouble()
+        set(value) = prefs.edit().putFloat("hist_heat_loss_25k_weight", value.toFloat().coerceIn(0f, 25000f)).apply()
+
+    fun save25kHistoricalModulation(modAt10C: Double, slope: Double, newSamples: Int) {
+        val oldWeight = historicalModulation25kWeight
+        val totalWeight = (oldWeight + newSamples).coerceAtMost(25000)
+        if (totalWeight <= 0) return
+        val wOld = oldWeight.toDouble()
+        val wNew = newSamples.toDouble()
+        val wSum = wOld + wNew
+        val blendedMod = if (oldWeight > 0) {
+            (historicalModulation25kAt10C * wOld + modAt10C * wNew) / wSum
+        } else modAt10C
+        val blendedSlope = if (oldWeight > 0) {
+            (historicalModulation25kSlopePerK * wOld + slope * wNew) / wSum
+        } else slope
+        historicalModulation25kAt10C = blendedMod
+        historicalModulation25kSlopePerK = blendedSlope
+        historicalModulation25kWeight = totalWeight
+    }
+
+    fun save25kHistoricalHeatLoss(lossWPerK: Int, newWeight: Double) {
+        val oldWeight = historicalHeatLoss25kWeight
+        val totalWeight = (oldWeight + newWeight).coerceAtMost(25000.0)
+        if (totalWeight <= 0.0) return
+        val blendedLoss = if (oldWeight > 0.0) {
+            ((historicalHeatLoss25kWPerK * oldWeight + lossWPerK * newWeight) / (oldWeight + newWeight)).toInt()
+        } else lossWPerK
+        historicalHeatLoss25kWPerK = blendedLoss
+        historicalHeatLoss25kWeight = totalWeight
+    }
+
     var estimatedPowerKw: Double
-        get() = prefs.getFloat("estimated_power_kw", 2.0f).toDouble()
+        get() = prefs.getFloat("estimated_power_kw", 0.7f).toDouble()
         set(value) = prefs.edit().putFloat("estimated_power_kw", value.toFloat()).apply()
+
+    /**
+     * Continuous parasitic electrical baseline load in Watts (secondary underfloor pump + standby electronics).
+     * Defaults to 50.0 W (generous rule of thumb: ~25W secondary ECM pump + ~15W control boards + primary pump).
+     * Can be directly calibrated when an external electricity submeter (e.g. Shelly 3EM / Eastron SDM) is installed.
+     */
+    var parasiticBaselinePowerWatts: Double
+        get() = prefs.getFloat("parasitic_baseline_power_watts", 50.0f).toDouble()
+        set(value) = prefs.edit().putFloat("parasitic_baseline_power_watts", value.toFloat()).apply()
+
+    var externalSubmeterActive: Boolean
+        get() = prefs.getBoolean("external_submeter_active", false)
+        set(value) = prefs.edit().putBoolean("external_submeter_active", value).apply()
 
     var autoBackgroundEnabled: Boolean
         get() = prefs.getBoolean("auto_bg_enabled", true)
@@ -88,14 +176,164 @@ class UserSettingsStore(context: Context) {
         get() = prefs.getBoolean("debug_mode_enabled", false)
         set(value) = prefs.edit().putBoolean("debug_mode_enabled", value).apply()
 
-    fun buildScheduleConfig(): SwitchScheduleConfig {
+    var telemetryCollectionEnabled: Boolean
+        get() = prefs.getBoolean("telemetry_collection_enabled", true)
+        set(value) = prefs.edit().putBoolean("telemetry_collection_enabled", value).apply()
+
+    var telemetryIntervalMinutes: Int
+        get() = prefs.getInt("telemetry_interval_minutes", 15).coerceIn(1, 60)
+        set(value) = prefs.edit().putInt("telemetry_interval_minutes", value.coerceIn(1, 60)).apply()
+
+    var zeroPriceExtensionEnabled: Boolean
+        get() = prefs.getBoolean("zero_price_ext_enabled", true)
+        set(value) = prefs.edit().putBoolean("zero_price_ext_enabled", value).apply()
+
+    var autoWeatherAdaptiveHoursEnabled: Boolean
+        get() = prefs.getBoolean("auto_weather_adaptive_hours", true)
+        set(value) = prefs.edit().putBoolean("auto_weather_adaptive_hours", value).apply()
+
+    var enabledSpotSources: Set<String>
+        get() = prefs.getStringSet("enabled_spot_sources", SpotPriceSource.DEFAULT_ENABLED)
+            ?: SpotPriceSource.DEFAULT_ENABLED
+        set(value) = prefs.edit().putStringSet("enabled_spot_sources", value).apply()
+
+    var primarySpotSource: String
+        get() = prefs.getString("primary_spot_source", SpotPriceSource.VATTENFALL.id)
+            ?: SpotPriceSource.VATTENFALL.id
+        set(value) = prefs.edit().putString("primary_spot_source", value).apply()
+
+    fun getOrderedSpotSources(): List<SpotPriceSource> {
+        val enabledSet = enabledSpotSources
+        val primary = SpotPriceSource.fromId(primarySpotSource) ?: SpotPriceSource.VATTENFALL
+        val ordered = mutableListOf<SpotPriceSource>()
+        if (primary.id in enabledSet) {
+            ordered.add(primary)
+        }
+        for (src in SpotPriceSource.ALL) {
+            if (src != primary && src.id in enabledSet) {
+                ordered.add(src)
+            }
+        }
+        if (ordered.isEmpty()) {
+            ordered.add(SpotPriceSource.VATTENFALL)
+        }
+        return ordered
+    }
+
+    var holisticOptimizationEnabled: Boolean
+        get() = prefs.getBoolean("holistic_optimization_enabled", true)
+        set(value) = prefs.edit().putBoolean("holistic_optimization_enabled", value).apply()
+
+    var buildingLossKwPerK: Double
+        get() = prefs.getFloat("building_loss_kw_per_k", 0.150f).toDouble()
+        set(value) = prefs.edit().putFloat("building_loss_kw_per_k", value.toFloat()).apply()
+
+    var maxThermalBufferingK: Double
+        get() = prefs.getFloat("max_thermal_buffering_k", 1.2f).toDouble()
+        set(value) = prefs.edit().putFloat("max_thermal_buffering_k", value.toFloat()).apply()
+
+    var weatherLatitude: Double
+        get() = prefs.getFloat("weather_latitude", 52.52f).toDouble()
+        set(value) = prefs.edit().putFloat("weather_latitude", value.toFloat()).apply()
+
+    var weatherLongitude: Double
+        get() = prefs.getFloat("weather_longitude", 13.41f).toDouble()
+        set(value) = prefs.edit().putFloat("weather_longitude", value.toFloat()).apply()
+
+    var optimizationPreference: String
+        get() = prefs.getString("optimization_preference", OptimizationPreference.BALANCED.id) ?: OptimizationPreference.BALANCED.id
+        set(value) = prefs.edit().putString("optimization_preference", value).apply()
+
+    var chartShowHpc1: Boolean
+        get() = prefs.getBoolean("chart_show_hpc1", true)
+        set(value) = prefs.edit().putBoolean("chart_show_hpc1", value).apply()
+
+    var chartShowHpc2: Boolean
+        get() = prefs.getBoolean("chart_show_hpc2", true)
+        set(value) = prefs.edit().putBoolean("chart_show_hpc2", value).apply()
+
+    var chartShowHpc3: Boolean
+        get() = prefs.getBoolean("chart_show_hpc3", false)
+        set(value) = prefs.edit().putBoolean("chart_show_hpc3", value).apply()
+
+    var chartShowHpc4: Boolean
+        get() = prefs.getBoolean("chart_show_hpc4", false)
+        set(value) = prefs.edit().putBoolean("chart_show_hpc4", value).apply()
+
+    var chartShowHpc5: Boolean
+        get() = prefs.getBoolean("chart_show_hpc5", false)
+        set(value) = prefs.edit().putBoolean("chart_show_hpc5", value).apply()
+
+    var chartShowScatterSteadyState: Boolean
+        get() = prefs.getBoolean("chart_show_scatter_steady", true)
+        set(value) = prefs.edit().putBoolean("chart_show_scatter_steady", value).apply()
+
+    var chartShowScatterWarmup: Boolean
+        get() = prefs.getBoolean("chart_show_scatter_warmup", false)
+        set(value) = prefs.edit().putBoolean("chart_show_scatter_warmup", value).apply()
+
+    var chartShowLivePoint: Boolean
+        get() = prefs.getBoolean("chart_show_live_point", true)
+        set(value) = prefs.edit().putBoolean("chart_show_live_point", value).apply()
+
+    var chartParallelShiftK: Double
+        get() = prefs.getFloat("chart_parallel_shift_k", 0.0f).toDouble()
+        set(value) = prefs.edit().putFloat("chart_parallel_shift_k", value.toFloat()).apply()
+
+    override var learnedBuildingLossKwPerK: Double
+        get() = prefs.getFloat("learned_building_loss_kw_per_k", buildingLossKwPerK.toFloat()).toDouble()
+        set(value) = prefs.edit().putFloat("learned_building_loss_kw_per_k", value.toFloat()).apply()
+
+    override var learnedCoolingRateKPerHour: Double
+        get() = prefs.getFloat("learned_cooling_rate_k_per_h", 0.18f).toDouble()
+        set(value) = prefs.edit().putFloat("learned_cooling_rate_k_per_h", value.toFloat()).apply()
+
+    override var learnedCycleCount: Int
+        get() = prefs.getInt("learned_cycle_count", 0)
+        set(value) = prefs.edit().putInt("learned_cycle_count", value).apply()
+
+    override var lastLearnedTimestampIso: String?
+        get() = prefs.getString("last_learned_timestamp_iso", null)
+        set(value) = prefs.edit().putString("last_learned_timestamp_iso", value).apply()
+
+    fun buildHolisticOptimizationConfig(
+        targetHeatingTempC: Double = sliderTempC,
+        liveStartingReturnTempC: Double? = null
+    ): HolisticOptimizationConfig {
+        val effectiveLossKwPerK = if (learnedCycleCount > 0) learnedBuildingLossKwPerK else buildingLossKwPerK
+        return HolisticOptimizationConfig(
+            targetHeatingTempC = targetHeatingTempC,
+            targetDailyRuntimeHours = targetOperationHours,
+            estimatedPowerKw = estimatedPowerKw,
+            parasiticBaselinePowerKw = parasiticBaselinePowerWatts / 1000.0,
+            customMeasuredParasiticLoadKw = if (externalSubmeterActive) parasiticBaselinePowerWatts / 1000.0 else null,
+            autoPowerModulationEnabled = autoPowerModulationEnabled,
+            useEmpiricalGroundTruthModulation = groundTruthModulationEnabled,
+            calibratedModulationAt10C = calibratedModulationAt10C,
+            calibratedModulationSlopePerK = calibratedModulationSlopePerK,
+            buildingLossKwPerK = effectiveLossKwPerK,
+            coolingRateKPerHour = learnedCoolingRateKPerHour,
+            maxThermalBufferingK = maxThermalBufferingK,
+            dailyBudgetEuro = dailyBudgetEuro,
+            preference = OptimizationPreference.fromId(optimizationPreference),
+            liveStartingReturnTempC = liveStartingReturnTempC,
+            adaptiveCycleCount = learnedCycleCount
+        )
+    }
+
+    fun buildScheduleConfig(averageOutdoorTempC: Double? = null): SwitchScheduleConfig {
+        val isHolistic = holisticOptimizationEnabled
         return SwitchScheduleConfig(
             windowCount = 1,
             maxSwitchPointsPerDay = 2,
             targetOperationHoursPerDay = targetOperationHours,
             temperatureSlider = HeatingTemperatureSlider().withValue(sliderTempC),
             dailyBudgetEuro = dailyBudgetEuro,
-            estimatedPowerKw = estimatedPowerKw
+            estimatedPowerKw = estimatedPowerKw,
+            autoPowerModulationEnabled = autoPowerModulationEnabled,
+            zeroPriceExtensionEnabled = if (isHolistic) zeroPriceExtensionEnabled else false,
+            autoWeatherAdaptiveHoursEnabled = false, // When holistic is disabled, strictly adhere to slider runtime
+            averageOutdoorTempC = averageOutdoorTempC
         )
     }
 }

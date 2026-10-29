@@ -1,0 +1,177 @@
+[
+    {
+        "Path":  "/heatSources",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "References":  "/heatSources/Source, /heatSources/actualHeatDemand, /heatSources/actualModulation, /heatSources/actualSupplyTemperature, /heatSources/additionalHeater, /heatSources/alternatingMode, /heatSources/chStatus, /heatSources/circulationCoolingSetpointDelta, /heatSources/circulationHeatingSetpointDelta, /heatSources/compressor, /heatSources/currentSupplySetpoint, /heatSources/dhw, /heatSources/eHeater, /heatSources/electricityConsumption, /heatSources/emStatus, /heatSources/emon, /heatSources/externalInputs, /heatSources/hs1, /heatSources/indoorType, /heatSources/info, /heatSources/nominalCHPower, /heatSources/numberOfStarts, /heatSources/outdoorType, /heatSources/pumpCirculationSpeed, /heatSources/returnTemperature, /heatSources/sensors, /heatSources/smartGridMode, /heatSources/standbyMode, /heatSources/workingTime",
+        "FullJson":  "{\"id\":\"/heatSources\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/heatSources/Source\",\"uri\":\"http://k30/heatSources/Source\"},{\"id\":\"/heatSources/actualHeatDemand\",\"uri\":\"http://k30/heatSources/actualHeatDemand\"},{\"id\":\"/heatSources/actualModulation\",\"uri\":\"http://k30/heatSources/actualModulation\"},{\"id\":\"/heatSources/actualSupplyTemperature\",\"uri\":\"http://k30/heatSources/actualSupplyTemperature\"},{\"id\":\"/heatSources/additionalHeater\",\"uri\":\"http://k30/heatSources/additionalHeater\"},{\"id\":\"/heatSources/alternatingMode\",\"uri\":\"http://k30/heatSources/alternatingMode\"},{\"id\":\"/heatSources/chStatus\",\"uri\":\"http://k30/heatSources/chStatus\"},{\"id\":\"/heatSources/circulationCoolingSetpointDelta\",\"uri\":\"http://k30/heatSources/circulationCoolingSetpointDelta\"},{\"id\":\"/heatSources/circulationHeatingSetpointDelta\",\"uri\":\"http://k30/heatSources/circulationHeatingSetpointDelta\"},{\"id\":\"/heatSources/compressor\",\"uri\":\"http://k30/heatSources/compressor\"},{\"id\":\"/heatSources/currentSupplySetpoint\",\"uri\":\"http://k30/heatSources/currentSupplySetpoint\"},{\"id\":\"/heatSources/dhw\",\"uri\":\"http://k30/heatSources/dhw\"},{\"id\":\"/heatSources/eHeater\",\"uri\":\"http://k30/heatSources/eHeater\"},{\"id\":\"/heatSources/electricityConsumption\",\"uri\":\"http://k30/heatSources/electricityConsumption\"},{\"id\":\"/heatSources/emStatus\",\"uri\":\"http://k30/heatSources/emStatus\"},{\"id\":\"/heatSources/emon\",\"uri\":\"http://k30/heatSources/emon\"},{\"id\":\"/heatSources/externalInputs\",\"uri\":\"http://k30/heatSources/externalInputs\"},{\"id\":\"/heatSources/hs1\",\"uri\":\"http://k30/heatSources/hs1\"},{\"id\":\"/heatSources/indoorType\",\"uri\":\"http://k30/heatSources/indoorType\"},{\"id\":\"/heatSources/info\",\"uri\":\"http://k30/heatSources/info\"},{\"id\":\"/heatSources/nominalCHPower\",\"uri\":\"http://k30/heatSources/nominalCHPower\"},{\"id\":\"/heatSources/numberOfStarts\",\"uri\":\"http://k30/heatSources/numberOfStarts\"},{\"id\":\"/heatSources/outdoorType\",\"uri\":\"http://k30/heatSources/outdoorType\"},{\"id\":\"/heatSources/pumpCirculationSpeed\",\"uri\":\"http://k30/heatSources/pumpCirculationSpeed\"},{\"id\":\"/heatSources/returnTemperature\",\"uri\":\"http://k30/heatSources/returnTemperature\"},{\"id\":\"/heatSources/sensors\",\"uri\":\"http://k30/heatSources/sensors\"},{\"id\":\"/heatSources/smartGridMode\",\"uri\":\"http://k30/heatSources/smartGridMode\"},{\"id\":\"/heatSources/standbyMode\",\"uri\":\"http://k30/heatSources/standbyMode\"},{\"id\":\"/heatSources/workingTime\",\"uri\":\"http://k30/heatSources/workingTime\"}]}"
+    },
+    {
+        "Path":  "/heatSources/actualHeatDemand",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "arrayData",
+        "FullJson":  "{\"id\":\"/heatSources/actualHeatDemand\",\"type\":\"arrayData\",\"writeable\":0,\"allowedValues\":[\"\",\"ch\",\"dhw\",\"frost\"],\"values\":[\"dhw\"]}"
+    },
+    {
+        "Path":  "/heatSources/actualSupplyTemperature",
+        "Value":  20.4,
+        "Unit":  "C",
+        "Type":  "floatValue",
+        "FullJson":  "{\"id\":\"/heatSources/actualSupplyTemperature\",\"type\":\"floatValue\",\"writeable\":0,\"value\":20.4,\"unitOfMeasure\":\"C\",\"state\":[{\"short\":32767.0},{\"open\":-32768.0}]}"
+    },
+    {
+        "Path":  "/heatSources/chStatus",
+        "Value":  "on",
+        "Unit":  "",
+        "Type":  "stringValue",
+        "FullJson":  "{\"id\":\"/heatSources/chStatus\",\"type\":\"stringValue\",\"writeable\":0,\"value\":\"on\",\"allowedValues\":[\"off\",\"on\"]}"
+    },
+    {
+        "Path":  "/heatSources/emStatus",
+        "Value":  "notConnected",
+        "Unit":  "",
+        "Type":  "stringValue",
+        "FullJson":  "{\"id\":\"/heatSources/emStatus\",\"type\":\"stringValue\",\"writeable\":0,\"value\":\"notConnected\",\"allowedValues\":[\"notConnected\",\"inactive\",\"activeCh\",\"activeDhw\"]}"
+    },
+    {
+        "Path":  "/heatSources/info",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "systeminfo",
+        "FullJson":  "{\"id\":\"/heatSources/info\",\"type\":\"systeminfo\",\"writeable\":0,\"values\":[{\"Ver\":\"120\",\"No\":\"\",\"Id\":\"20004\",\"Tok\":\"8\"}]}"
+    },
+    {
+        "Path":  "/heatSources/returnTemperature",
+        "Value":  47.3,
+        "Unit":  "C",
+        "Type":  "floatValue",
+        "FullJson":  "{\"id\":\"/heatSources/returnTemperature\",\"type\":\"floatValue\",\"writeable\":0,\"value\":47.3,\"unitOfMeasure\":\"C\",\"state\":[{\"short\":32767.0},{\"open\":-32768.0}]}"
+    },
+    {
+        "Path":  "/heatSources/standbyMode",
+        "Value":  "off",
+        "Unit":  "",
+        "Type":  "stringValue",
+        "FullJson":  "{\"id\":\"/heatSources/standbyMode\",\"type\":\"stringValue\",\"writeable\":0,\"value\":\"off\",\"allowedValues\":[\"off\",\"on\"]}"
+    },
+    {
+        "Path":  "/heatSources/actualModulation",
+        "Value":  38.0,
+        "Unit":  "%",
+        "Type":  "floatValue",
+        "References":  "",
+        "FullJson":  "{\"id\":\"/heatSources/actualModulation\",\"type\":\"floatValue\",\"writeable\":0,\"value\":38.0,\"unitOfMeasure\":\"%\"}"
+    },
+    {
+        "Path":  "/heatSources/numberOfStarts",
+        "Value":  2273.0,
+        "Unit":  "",
+        "Type":  "floatValue",
+        "References":  "",
+        "FullJson":  "{\"id\":\"/heatSources/numberOfStarts\",\"type\":\"floatValue\",\"writeable\":0,\"value\":2273.0}"
+    },
+    {
+        "Path":  "/heatSources/hs1",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "References":  "/heatSources/hs1/heatPumpType, /heatSources/hs1/numberOfStarts, /heatSources/hs1/refrigerant, /heatSources/hs1/supplyFlowCondenserTemp, /heatSources/hs1/type, /heatSources/hs1/workingTime",
+        "FullJson":  "{\"id\":\"/heatSources/hs1\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/heatSources/hs1/heatPumpType\",\"uri\":\"http://k30/heatSources/hs1/heatPumpType\"},{\"id\":\"/heatSources/hs1/numberOfStarts\",\"uri\":\"http://k30/heatSources/hs1/numberOfStarts\"},{\"id\":\"/heatSources/hs1/refrigerant\",\"uri\":\"http://k30/heatSources/hs1/refrigerant\"},{\"id\":\"/heatSources/hs1/supplyFlowCondenserTemp\",\"uri\":\"http://k30/heatSources/hs1/supplyFlowCondenserTemp\"},{\"id\":\"/heatSources/hs1/type\",\"uri\":\"http://k30/heatSources/hs1/type\"},{\"id\":\"/heatSources/hs1/workingTime\",\"uri\":\"http://k30/heatSources/hs1/workingTime\"}]}"
+    },
+    {
+        "Path":  "/heatSources/hs1/heatPumpType",
+        "Value":  "air_water",
+        "Unit":  "",
+        "Type":  "stringValue",
+        "FullJson":  "{\"id\":\"/heatSources/hs1/heatPumpType\",\"type\":\"stringValue\",\"writeable\":0,\"value\":\"air_water\",\"allowedValues\":[\"air_water\",\"liquid_water\",\"exhaustAir_water\"]}"
+    },
+    {
+        "Path":  "/heatSources/hs1/numberOfStarts",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "emonValue",
+        "FullJson":  "{\"id\":\"/heatSources/hs1/numberOfStarts\",\"type\":\"emonValue\",\"writeable\":0,\"values\":[{\"ch\":1390},{\"dhw\":883},{\"cooling\":0},{\"total\":2273}]}"
+    },
+    {
+        "Path":  "/heatSources/hs1/supplyFlowCondenserTemp",
+        "Value":  52.3,
+        "Unit":  "C",
+        "Type":  "floatValue",
+        "FullJson":  "{\"id\":\"/heatSources/hs1/supplyFlowCondenserTemp\",\"type\":\"floatValue\",\"writeable\":0,\"value\":52.3,\"unitOfMeasure\":\"C\",\"state\":[{\"short\":32767.0},{\"open\":-32768.0}]}"
+    },
+    {
+        "Path":  "/heatSources/hs1/type",
+        "Value":  "Heatpump",
+        "Unit":  "",
+        "Type":  "stringValue",
+        "FullJson":  "{\"id\":\"/heatSources/hs1/type\",\"type\":\"stringValue\",\"writeable\":0,\"value\":\"Heatpump\",\"allowedValues\":[\"No_Appliance\",\"OilBoiler\",\"GasBoiler\",\"Heatpump\",\"unknownBoiler\",\"eBoiler\"]}"
+    },
+    {
+        "Path":  "/heatSources/hs1/workingTime",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "emonValue",
+        "FullJson":  "{\"id\":\"/heatSources/hs1/workingTime\",\"type\":\"emonValue\",\"writeable\":0,\"unit\":\"s\",\"values\":[{\"ch\":15022430},{\"dhw\":5657400},{\"cooling\":0},{\"total\":20679830}]}"
+    },
+    {
+        "Path":  "/system/sensors",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "References":  "/system/sensors/temperatures",
+        "FullJson":  "{\"id\":\"/system/sensors\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/system/sensors/temperatures\",\"uri\":\"http://k30/system/sensors/temperatures\"}]}"
+    },
+    {
+        "Path":  "/system/sensors/temperatures",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "FullJson":  "{\"id\":\"/system/sensors/temperatures\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/system/sensors/temperatures/outdoor_t1\",\"uri\":\"http://k30/system/sensors/temperatures/outdoor_t1\"}]}"
+    },
+    {
+        "Path":  "/recordings",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "References":  "/recordings/dhwCircuits, /recordings/heatSources, /recordings/heatingCircuits, /recordings/system",
+        "FullJson":  "{\"id\":\"/recordings\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/recordings/dhwCircuits\",\"uri\":\"http://k30/recordings/dhwCircuits\"},{\"id\":\"/recordings/heatSources\",\"uri\":\"http://k30/recordings/heatSources\"},{\"id\":\"/recordings/heatingCircuits\",\"uri\":\"http://k30/recordings/heatingCircuits\"},{\"id\":\"/recordings/system\",\"uri\":\"http://k30/recordings/system\"}]}"
+    },
+    {
+        "Path":  "/recordings/dhwCircuits",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "FullJson":  "{\"id\":\"/recordings/dhwCircuits\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/recordings/dhwCircuits/dhw1\",\"uri\":\"http://k30/recordings/dhwCircuits/dhw1\"}]}"
+    },
+    {
+        "Path":  "/recordings/heatingCircuits",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "FullJson":  "{\"id\":\"/recordings/heatingCircuits\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/recordings/heatingCircuits/hc1\",\"uri\":\"http://k30/recordings/heatingCircuits/hc1\"}]}"
+    },
+    {
+        "Path":  "/recordings/system",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "FullJson":  "{\"id\":\"/recordings/system\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/recordings/system/sensors\",\"uri\":\"http://k30/recordings/system/sensors\"}]}"
+    },
+    {
+        "Path":  "/recordings/heatSources",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "References":  "/recordings/heatSources/actualSupplyTemperature, /recordings/heatSources/emon",
+        "FullJson":  "{\"id\":\"/recordings/heatSources\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/recordings/heatSources/actualSupplyTemperature\",\"uri\":\"http://k30/recordings/heatSources/actualSupplyTemperature\"},{\"id\":\"/recordings/heatSources/emon\",\"uri\":\"http://k30/recordings/heatSources/emon\"}]}"
+    },
+    {
+        "Path":  "/recordings/heatSources/emon",
+        "Value":  "(no direct value)",
+        "Unit":  "",
+        "Type":  "refEnum",
+        "FullJson":  "{\"id\":\"/recordings/heatSources/emon\",\"type\":\"refEnum\",\"references\":[{\"id\":\"/recordings/heatSources/emon/ch\",\"uri\":\"http://k30/recordings/heatSources/emon/ch\"},{\"id\":\"/recordings/heatSources/emon/cooling\",\"uri\":\"http://k30/recordings/heatSources/emon/cooling\"},{\"id\":\"/recordings/heatSources/emon/dhw\",\"uri\":\"http://k30/recordings/heatSources/emon/dhw\"},{\"id\":\"/recordings/heatSources/emon/total\",\"uri\":\"http://k30/recordings/heatSources/emon/total\"}]}"
+    }
+]

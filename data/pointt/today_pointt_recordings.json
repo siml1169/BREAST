@@ -1,0 +1,119 @@
+{
+  "/heatSources/hs1/workingTime": {
+    "id": "/heatSources/hs1/workingTime",
+    "type": "emonValue",
+    "writeable": 0,
+    "unit": "s",
+    "values": [
+      {
+        "ch": 15161060
+      },
+      {
+        "dhw": 5673540
+      },
+      {
+        "cooling": 0
+      },
+      {
+        "total": 20834600
+      }
+    ]
+  },
+  "/heatSources/hs1/numberOfStarts": {
+    "id": "/heatSources/hs1/numberOfStarts",
+    "type": "emonValue",
+    "writeable": 0,
+    "values": [
+      {
+        "ch": 1402
+      },
+      {
+        "dhw": 885
+      },
+      {
+        "cooling": 0
+      },
+      {
+        "total": 2287
+      }
+    ]
+  },
+  "/recordings/heatSources/emon/ch": {
+    "id": "/recordings/heatSources/emon/ch",
+    "type": "refEnum",
+    "references": [
+      {
+        "id": "/recordings/heatSources/emon/ch/compressor",
+        "uri": "http://k30/recordings/heatSources/emon/ch/compressor"
+      },
+      {
+        "id": "/recordings/heatSources/emon/ch/eheater",
+        "uri": "http://k30/recordings/heatSources/emon/ch/eheater"
+      },
+      {
+        "id": "/recordings/heatSources/emon/ch/numberOfStarts",
+        "uri": "http://k30/recordings/heatSources/emon/ch/numberOfStarts"
+      },
+      {
+        "id": "/recordings/heatSources/emon/ch/outputProduced",
+        "uri": "http://k30/recordings/heatSources/emon/ch/outputProduced"
+      },
+      {
+        "id": "/recordings/heatSources/emon/ch/workingTime",
+        "uri": "http://k30/recordings/heatSources/emon/ch/workingTime"
+      }
+    ]
+  },
+  "/recordings/heatSources/emon/dhw": {
+    "id": "/recordings/heatSources/emon/dhw",
+    "type": "refEnum",
+    "references": [
+      {
+        "id": "/recordings/heatSources/emon/dhw/compressor",
+        "uri": "http://k30/recordings/heatSources/emon/dhw/compressor"
+      },
+      {
+        "id": "/recordings/heatSources/emon/dhw/eheater",
+        "uri": "http://k30/recordings/heatSources/emon/dhw/eheater"
+      },
+      {
+        "id": "/recordings/heatSources/emon/dhw/numberOfStarts",
+        "uri": "http://k30/recordings/heatSources/emon/dhw/numberOfStarts"
+      },
+      {
+        "id": "/recordings/heatSources/emon/dhw/outputProduced",
+        "uri": "http://k30/recordings/heatSources/emon/dhw/outputProduced"
+      },
+      {
+        "id": "/recordings/heatSources/emon/dhw/workingTime",
+        "uri": "http://k30/recordings/heatSources/emon/dhw/workingTime"
+      }
+    ]
+  },
+  "/recordings/heatSources/emon/total": {
+    "id": "/recordings/heatSources/emon/total",
+    "type": "refEnum",
+    "references": [
+      {
+        "id": "/recordings/heatSources/emon/total/compressor",
+        "uri": "http://k30/recordings/heatSources/emon/total/compressor"
+      },
+      {
+        "id": "/recordings/heatSources/emon/total/eheater",
+        "uri": "http://k30/recordings/heatSources/emon/total/eheater"
+      },
+      {
+        "id": "/recordings/heatSources/emon/total/numberOfStarts",
+        "uri": "http://k30/recordings/heatSources/emon/total/numberOfStarts"
+      },
+      {
+        "id": "/recordings/heatSources/emon/total/outputProduced",
+        "uri": "http://k30/recordings/heatSources/emon/total/outputProduced"
+      },
+      {
+        "id": "/recordings/heatSources/emon/total/workingTime",
+        "uri": "http://k30/recordings/heatSources/emon/total/workingTime"
+      }
+    ]
+  }
+}

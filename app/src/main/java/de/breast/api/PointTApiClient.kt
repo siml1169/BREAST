@@ -1,6 +1,7 @@
 package de.breast.api
 
 import de.breast.auth.SingleKeyAuthManager
+import de.breast.telemetry.HeatPumpTelemetrySnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -24,6 +26,13 @@ data class BoschGateway(
     val deviceType: String = "unknown",
     val productId: String? = null,
     val fwVersion: String? = null
+)
+
+@Serializable
+data class RecordingEntry(
+    val c: Int? = null,
+    val y: Double? = null,
+    val d: String? = null
 )
 
 @Serializable
@@ -43,7 +52,9 @@ data class ResourceNode(
     val maxNbOfSwitchPoints: Int? = null,
     val maxNbOfSwitchPointsPerDay: Int? = null,
     val switchPointTimeRaster: Int? = null,
-    val setpointProperty: ResourceReference? = null
+    val setpointProperty: ResourceReference? = null,
+    val recording: List<RecordingEntry>? = null,
+    val interval: String? = null
 ) {
     val isWritable: Boolean get() = (writeable ?: 0) > 0
 }
@@ -182,6 +193,64 @@ class PointTApiClient(
                 }.getOrNull()
             }
         }
+
+    suspend fun fetchRecording(
+        gatewayId: String,
+        resourcePath: String,
+        interval: String? = null
+    ): ResourceNode? = withContext(Dispatchers.IO) {
+        val normalizedPath = if (resourcePath.startsWith("/")) resourcePath else "/$resourcePath"
+        val token = authManager.getValidAccessToken()
+        val urlBuilder = "$baseUrl/gateways/$gatewayId/resource$normalizedPath".toHttpUrlOrNull()?.newBuilder()
+            ?: return@withContext null
+        if (!interval.isNullOrBlank()) {
+            urlBuilder.addQueryParameter("interval", interval)
+        }
+        val request = Request.Builder()
+            .url(urlBuilder.build())
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (response.code == 404 || response.code == 400 || response.code == 403) {
+                return@use null
+            }
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful || body.isBlank()) {
+                return@use null
+            }
+            runCatching {
+                json.decodeFromString<ResourceNode>(body)
+            }.getOrNull()
+        }
+    }
+
+    suspend fun fetchRawRecording(
+        gatewayId: String,
+        resourcePath: String,
+        interval: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        val normalizedPath = if (resourcePath.startsWith("/")) resourcePath else "/$resourcePath"
+        val token = authManager.getValidAccessToken()
+        val urlBuilder = "$baseUrl/gateways/$gatewayId/resource$normalizedPath".toHttpUrlOrNull()?.newBuilder()
+            ?: return@withContext null
+        if (!interval.isNullOrBlank()) {
+            urlBuilder.addQueryParameter("interval", interval)
+        }
+        val request = Request.Builder()
+            .url(urlBuilder.build())
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful || body.isBlank()) null else body
+        }
+    }
 
     suspend fun putResourceValue(
         gatewayId: String,
@@ -409,4 +478,53 @@ class PointTApiClient(
         resourcePath = "/dhwCircuits/$dhwId/charge",
         value = JsonPrimitive(if (start) "start" else "stop")
     )
+
+    suspend fun getHeatPumpTelemetry(
+        gatewayId: String,
+        spotPriceGrossCt: Double? = null,
+        spotPriceNetCt: Double? = null
+    ): HeatPumpTelemetrySnapshot = withContext(Dispatchers.IO) {
+        val now = java.time.Instant.now()
+        val nowIso = java.time.format.DateTimeFormatter.ISO_INSTANT.format(now)
+        val epochSeconds = now.epochSecond
+
+        fun parseDouble(node: ResourceNode?): Double? {
+            val prim = node?.value as? JsonPrimitive ?: return null
+            return prim.content.toDoubleOrNull()
+        }
+
+        fun parseString(node: ResourceNode?): String? {
+            val prim = node?.value as? JsonPrimitive
+            if (prim != null) return prim.content
+            val arr = node?.value as? kotlinx.serialization.json.JsonArray
+            if (arr != null && arr.isNotEmpty()) {
+                return arr.joinToString(",") { (it as? JsonPrimitive)?.content ?: it.toString() }
+            }
+            return null
+        }
+
+        val outdoorNode = getResource(gatewayId, "/system/sensors/temperatures/outdoor_t1")
+        val supplyNode = getResource(gatewayId, "/heatSources/actualSupplyTemperature")
+        val returnNode = getResource(gatewayId, "/heatSources/returnTemperature")
+        val condNode = getResource(gatewayId, "/heatSources/hs1/supplyFlowCondenserTemp")
+        val modNode = getResource(gatewayId, "/heatSources/actualModulation")
+        val demandNode = getResource(gatewayId, "/heatSources/actualHeatDemand")
+        val chStatusNode = getResource(gatewayId, "/heatSources/chStatus")
+        val setpointNode = getResource(gatewayId, "/heatingCircuits/hc1/currentRoomSetpoint")
+
+        HeatPumpTelemetrySnapshot(
+            timestampIso = nowIso,
+            epochSeconds = epochSeconds,
+            outdoorTempC = parseDouble(outdoorNode),
+            supplyTempC = parseDouble(supplyNode),
+            returnTempC = parseDouble(returnNode),
+            condenserTempC = parseDouble(condNode),
+            setpointTempC = parseDouble(setpointNode),
+            modulationPct = parseDouble(modNode),
+            demand = parseString(demandNode),
+            chStatus = parseString(chStatusNode),
+            spotPriceGrossCt = spotPriceGrossCt,
+            spotPriceNetCt = spotPriceNetCt
+        )
+    }
 }

@@ -1,0 +1,668 @@
+{
+  "https://pointt-api.bosch-thermotechnology.com/pointt-api/api/v1/gateways/101845229/resource/recordings/heatSources/emon/ch/compressor?interval=2026-10-28": {
+    "id": "/recordings/heatSources/emon/ch/compressor?interval=2026-10-28",
+    "type": "yRecording",
+    "writeable": 0,
+    "unitOfMeasure": "kWh",
+    "recordedResource": {
+      "id": "/heatSources/emon/ch/compressor",
+      "uri": "http://k30/heatSources/emon/ch/compressor"
+    },
+    "interval": "2026-10-28",
+    "sampleRate": "P1H",
+    "recordingType": "actual",
+    "recording": [
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      }
+    ]
+  },
+  "https://pointt-api.bosch-thermotechnology.com/pointt-api/api/v1/gateways/101845229/resource/recordings/heatSources/emon/ch/outputProduced?interval=2026-10-28": {
+    "id": "/recordings/heatSources/emon/ch/outputProduced?interval=2026-10-28",
+    "type": "yRecording",
+    "writeable": 0,
+    "unitOfMeasure": "kWh",
+    "recordedResource": {
+      "id": "/heatSources/emon/ch/outputProduced",
+      "uri": "http://k30/heatSources/emon/ch/outputProduced"
+    },
+    "interval": "2026-10-28",
+    "sampleRate": "P1H",
+    "recordingType": "actual",
+    "recording": [
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 2.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 2.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      }
+    ]
+  },
+  "https://pointt-api.bosch-thermotechnology.com/pointt-api/api/v1/gateways/101845229/resource/recordings/heatSources/emon/dhw/compressor?interval=2026-10-28": {
+    "id": "/recordings/heatSources/emon/dhw/compressor?interval=2026-10-28",
+    "type": "yRecording",
+    "writeable": 0,
+    "unitOfMeasure": "kWh",
+    "recordedResource": {
+      "id": "/heatSources/emon/dhw/compressor",
+      "uri": "http://k30/heatSources/emon/dhw/compressor"
+    },
+    "interval": "2026-10-28",
+    "sampleRate": "P1H",
+    "recordingType": "actual",
+    "recording": [
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      }
+    ]
+  },
+  "https://pointt-api.bosch-thermotechnology.com/pointt-api/api/v1/gateways/101845229/resource/recordings/heatSources/emon/dhw/outputProduced?interval=2026-10-28": {
+    "id": "/recordings/heatSources/emon/dhw/outputProduced?interval=2026-10-28",
+    "type": "yRecording",
+    "writeable": 0,
+    "unitOfMeasure": "kWh",
+    "recordedResource": {
+      "id": "/heatSources/emon/dhw/outputProduced",
+      "uri": "http://k30/heatSources/emon/dhw/outputProduced"
+    },
+    "interval": "2026-10-28",
+    "sampleRate": "P1H",
+    "recordingType": "actual",
+    "recording": [
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 4.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      }
+    ]
+  },
+  "https://pointt-api.bosch-thermotechnology.com/pointt-api/api/v1/gateways/101845229/resource/recordings/heatSources/emon/total/compressor?interval=2026-10-28": {
+    "id": "/recordings/heatSources/emon/total/compressor?interval=2026-10-28",
+    "type": "yRecording",
+    "writeable": 0,
+    "unitOfMeasure": "kWh",
+    "recordedResource": {
+      "id": "/heatSources/emon/total/compressor",
+      "uri": "http://k30/heatSources/emon/total/compressor"
+    },
+    "interval": "2026-10-28",
+    "sampleRate": "P1H",
+    "recordingType": "actual",
+    "recording": [
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 1.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      }
+    ]
+  },
+  "https://pointt-api.bosch-thermotechnology.com/pointt-api/api/v1/gateways/101845229/resource/recordings/heatSources/emon/total/outputProduced?interval=2026-10-28": {
+    "id": "/recordings/heatSources/emon/total/outputProduced?interval=2026-10-28",
+    "type": "yRecording",
+    "writeable": 0,
+    "unitOfMeasure": "kWh",
+    "recordedResource": {
+      "id": "/heatSources/emon/total/outputProduced",
+      "uri": "http://k30/heatSources/emon/total/outputProduced"
+    },
+    "interval": "2026-10-28",
+    "sampleRate": "P1H",
+    "recordingType": "actual",
+    "recording": [
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 2.0
+      },
+      {
+        "c": 1,
+        "y": 5.0
+      },
+      {
+        "c": 1,
+        "y": 2.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 3.0
+      },
+      {
+        "c": 1,
+        "y": 2.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 1,
+        "y": 0.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      },
+      {
+        "c": 0,
+        "y": 1.0
+      }
+    ]
+  }
+}

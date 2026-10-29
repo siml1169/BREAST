@@ -8,3 +8,5 @@ tokens.json
 gateway_resources_dump.json
 *.pcap
 *.pcapng
+__pycache__/
+*.pyc

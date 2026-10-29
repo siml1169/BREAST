@@ -4,6 +4,7 @@ import de.breast.api.PointTApiClient
 import de.breast.api.SwitchPoint
 import de.breast.spot.SpotPriceClient
 import de.breast.spot.SpotPriceSlot
+import de.breast.weather.HourlyWeatherForecast
 import kotlinx.serialization.Serializable
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -79,7 +80,10 @@ data class TimeWindow(
     val setpoint: String,
     val averageGrossCtPerKwh: Double,
     val averageSpotNetCtPerKwh: Double,
-    val estimatedWindowCostEuro: Double = 0.0
+    val estimatedWindowCostEuro: Double = 0.0,
+    val estimatedElectricityKwh: Double = 0.0,
+    val estimatedAveragePowerKw: Double = 0.0,
+    val estimatedModulationPct: Double = 0.0
 ) {
     val durationMinutes: Int get() = endMinutes - startMinutes
 
@@ -88,8 +92,14 @@ data class TimeWindow(
         val sm = startMinutes % 60
         val eh = endMinutes / 60
         val em = endMinutes % 60
+        val modInfo = if (estimatedModulationPct > 0.0) {
+            String.format(java.util.Locale.US, " (%.1f kWh @ ~%.0f%% mod)", estimatedElectricityKwh, estimatedModulationPct)
+        } else if (estimatedElectricityKwh > 0.0) {
+            String.format(java.util.Locale.US, " (%.1f kWh)", estimatedElectricityKwh)
+        } else ""
         return String.format(
-            "%s (%s) %02d:%02d - %02d:%02d (%3d min) | Avg Spot: %5.2f ct/kWh (Gross: %5.2f ct/kWh) | Est. Cost: %.2f EUR",
+            java.util.Locale.US,
+            "%s (%s) %02d:%02d - %02d:%02d (%3d min) | Avg Spot: %5.2f ct/kWh (Gross: %5.2f ct/kWh) | Est. Cost: %.2f EUR%s",
             date,
             dayOfWeekCode,
             sh,
@@ -99,7 +109,8 @@ data class TimeWindow(
             durationMinutes,
             averageSpotNetCtPerKwh,
             averageGrossCtPerKwh,
-            estimatedWindowCostEuro
+            estimatedWindowCostEuro,
+            modInfo
         )
     }
 }
@@ -117,7 +128,15 @@ data class DailySwitchSchedulePlan(
     val heatingWindows: List<TimeWindow>,
     val heatingSwitchPoints: List<SwitchPoint>,
     val dhwWindows: List<TimeWindow>,
-    val dhwSwitchPoints: List<SwitchPoint>
+    val dhwSwitchPoints: List<SwitchPoint>,
+    val estimatedElectricityKwh: Double = 0.0,
+    val estimatedDailyTotalElectricityKwh: Double = estimatedElectricityKwh,
+    val estimatedDailyTotalCostEuro: Double = estimatedDailyCostEuro,
+    val estimatedSetbackElectricityKwh: Double = 0.0,
+    val estimatedSetbackCostEuro: Double = 0.0,
+    val estimatedAveragePowerKw: Double = 0.0,
+    val estimatedModulationPct: Double = 0.0,
+    val physicsBreakdown: String? = null
 )
 
 @Serializable
@@ -130,13 +149,18 @@ data class SwitchScheduleConfig(
     val temperatureSlider: HeatingTemperatureSlider = HeatingTemperatureSlider(currentValueC = 21.5),
     val inactiveOffTempC: Double = 15.0,
     val dailyBudgetEuro: Double? = null,
-    val estimatedPowerKw: Double = 2.0,
+    val estimatedPowerKw: Double = 0.7,
+    val autoPowerModulationEnabled: Boolean = false,
     val maxSwitchPointsPerDay: Int = 2,
     val timeRasterMinutes: Int = 15,
     val heatingOnSetpoint: String = "comfort2",
     val heatingOffSetpoint: String = "eco",
     val dhwOnSetpoint: String = "low",
-    val dhwOffSetpoint: String = "off"
+    val dhwOffSetpoint: String = "off",
+    val zeroPriceExtensionEnabled: Boolean = false,
+    val zeroPriceThresholdNetCtPerKwh: Double = 0.5,
+    val autoWeatherAdaptiveHoursEnabled: Boolean = false,
+    val averageOutdoorTempC: Double? = null
 ) {
     val targetHeatingTempC: Double get() = temperatureSlider.snappedTempC
 }
@@ -234,18 +258,37 @@ class SwitchProgramScheduler(
 
     fun buildDailySwitchSchedule(
         date: LocalDate,
-        spotSlots: List<SpotPriceSlot>
+        spotSlots: List<SpotPriceSlot>,
+        weatherForecast: List<HourlyWeatherForecast> = emptyList(),
+        holisticConfig: HolisticOptimizationConfig? = null
     ): DailySwitchSchedulePlan? {
+        if (holisticConfig != null) {
+            val holisticOptimizer = HolisticScheduleOptimizer(config = holisticConfig)
+            val plan = holisticOptimizer.buildSchedule(date, spotSlots, weatherForecast)
+            if (plan != null) return plan
+        }
+
         val rasterSlots = buildDayRasterSlots(date, spotSlots)
         if (rasterSlots.isEmpty()) return null
 
         val dayCode = toBoschDayOfWeek(date.dayOfWeek)
         val dateStr = date.toString()
-        val targetMaxMinutes = (config.targetOperationHoursPerDay * 60.0).roundToInt()
+        val targetMaxMinutes = if (config.autoWeatherAdaptiveHoursEnabled && config.averageOutdoorTempC != null) {
+            val tOut = config.averageOutdoorTempC
+            // Base demand: 3.5h at 16°C; +0.5h for every 1°C colder. Clamped to [minHours, 16.0h]
+            val adaptiveHours = (3.5 + 0.5 * (16.0 - tOut)).coerceIn(config.minOperationHoursPerDay, 16.0)
+            (adaptiveHours * 60.0).roundToInt()
+        } else {
+            (config.targetOperationHoursPerDay * 60.0).roundToInt()
+        }
 
-        val sharedWindows = findOptimalSharedWindowsWithBudget(dateStr, dayCode, rasterSlots)
+        val sharedWindows = findOptimalSharedWindowsWithBudget(dateStr, dayCode, rasterSlots, targetMaxMinutes)
         val plannedMinutes = sharedWindows.sumOf { it.durationMinutes }
-        val budgetCutMinutes = (targetMaxMinutes - plannedMinutes).coerceAtLeast(0)
+        val budgetCutMinutes = if (config.dailyBudgetEuro != null) {
+            (targetMaxMinutes - plannedMinutes).coerceAtLeast(0)
+        } else {
+            0
+        }
         val totalCostEuro = sharedWindows.sumOf { it.estimatedWindowCostEuro }
 
         val heatingWindows = sharedWindows.map { it.copy(setpoint = config.heatingOnSetpoint) }
@@ -267,6 +310,10 @@ class SwitchProgramScheduler(
             maxSwitchPoints = config.maxSwitchPointsPerDay
         )
 
+        val totalKwh = sharedWindows.sumOf { it.estimatedElectricityKwh }
+        val avgPower = if (plannedMinutes > 0) totalKwh / (plannedMinutes / 60.0) else 0.0
+        val avgMod = if (sharedWindows.isNotEmpty()) sharedWindows.map { it.estimatedModulationPct }.average() else 0.0
+
         return DailySwitchSchedulePlan(
             date = dateStr,
             dayOfWeekCode = dayCode,
@@ -279,7 +326,10 @@ class SwitchProgramScheduler(
             heatingWindows = heatingWindows,
             heatingSwitchPoints = heatingSwitchPoints,
             dhwWindows = dhwWindows,
-            dhwSwitchPoints = dhwSwitchPoints
+            dhwSwitchPoints = dhwSwitchPoints,
+            estimatedElectricityKwh = totalKwh,
+            estimatedAveragePowerKw = avgPower,
+            estimatedModulationPct = avgMod
         )
     }
 
@@ -298,6 +348,19 @@ class SwitchProgramScheduler(
         val numSlots = 1440 / raster
         val result = mutableListOf<RasterSlot>()
 
+        val effectivePowerKw = if (config.autoPowerModulationEnabled && config.averageOutdoorTempC != null) {
+            val tOut = config.averageOutdoorTempC
+            val tFlow = 21.5 + 0.75 * (20.0 - tOut)
+            val cop = ((273.15 + tFlow) / kotlin.math.max(4.0, tFlow - tOut) * 0.46).coerceIn(1.6, 6.5)
+            val heatLossKw = kotlin.math.max(0.0, 21.5 - tOut) * 0.150
+            val dailyHeatNeed = 24.0 * heatLossKw
+            val targetHours = kotlin.math.max(1.0, config.targetOperationHoursPerDay)
+            val thPower = (dailyHeatNeed / targetHours).coerceIn(1.8, 9.0)
+            (thPower / cop + 0.04).coerceIn(0.45, 2.40)
+        } else {
+            config.estimatedPowerKw
+        }
+
         for (i in 0 until numSlots) {
             val startMin = i * raster
             val endMin = (i + 1) * raster
@@ -306,7 +369,7 @@ class SwitchProgramScheduler(
                 ?: relevant.minByOrNull { kotlin.math.abs(it.startEpochSeconds - slotMidEpoch) }
                 ?: continue
 
-            val slotEnergyKwh = config.estimatedPowerKw * slotHours
+            val slotEnergyKwh = effectivePowerKw * slotHours
             val slotCostEuro = (matching.totalGrossCtPerKwh / 100.0) * slotEnergyKwh
 
             result.add(
@@ -326,7 +389,8 @@ class SwitchProgramScheduler(
     private fun findOptimalSharedWindowsWithBudget(
         dateStr: String,
         dayCode: String,
-        rasterSlots: List<RasterSlot>
+        rasterSlots: List<RasterSlot>,
+        effectiveMaxMinutes: Int = ((config.targetOperationHoursPerDay * 60.0).roundToInt())
     ): List<TimeWindow> {
         val raster = config.timeRasterMinutes.coerceAtLeast(15)
         val n = rasterSlots.size
@@ -334,8 +398,7 @@ class SwitchProgramScheduler(
         val usableN = (n - 1).coerceAtLeast(1)
 
         val numWindows = config.windowCount.coerceIn(1, (config.maxSwitchPointsPerDay / 2).coerceAtLeast(1))
-        val maxOnSlots = ((config.targetOperationHoursPerDay * 60.0) / raster).roundToInt()
-            .coerceIn(numWindows, usableN)
+        val maxOnSlots = (effectiveMaxMinutes / raster).coerceIn(numWindows, usableN)
         val minOnSlots = ((config.minOperationHoursPerDay * 60.0) / raster).roundToInt()
             .coerceIn(numWindows, maxOnSlots)
         val minWindowSlots = (config.minWindowMinutes / raster).coerceIn(1, maxOnSlots / numWindows)
@@ -364,7 +427,7 @@ class SwitchProgramScheduler(
                 for (startIdx in 0..(usableN - on)) {
                     val endIdx = startIdx + on
                     val winEuro = prefixEuro[endIdx] - prefixEuro[startIdx]
-                    if (winEuro < bestEuro) {
+                    if (winEuro < bestEuro - 1e-9) {
                         bestEuro = winEuro
                         bestStart = startIdx
                     }
@@ -376,10 +439,40 @@ class SwitchProgramScheduler(
                 }
             }
 
-            val endIdx = chosenStartIdx + chosenLen
+            var startIdx = chosenStartIdx
+            var endIdx = chosenStartIdx + chosenLen
+
+            // OPPORTUNITY EXTENSION (Zero / Negative Spot Price Absorber):
+            // If contiguous adjacent slots have spot price <= threshold (e.g. <= 0.5 ct/kWh),
+            // seamlessly expand forward and backward into free energy to pre-charge floors & buffer!
+            if (config.zeroPriceExtensionEnabled) {
+                while (endIdx < usableN && rasterSlots[endIdx].spotNetCt <= config.zeroPriceThresholdNetCtPerKwh) {
+                    val nextEnd = endIdx + 1
+                    val newCost = prefixEuro[nextEnd] - prefixEuro[startIdx]
+                    if (budget != null && newCost > budget + 1e-9) break
+                    endIdx = nextEnd
+                }
+                while (startIdx > 0 && rasterSlots[startIdx - 1].spotNetCt <= config.zeroPriceThresholdNetCtPerKwh) {
+                    val prevStart = startIdx - 1
+                    val newCost = prefixEuro[endIdx] - prefixEuro[prevStart]
+                    if (budget != null && newCost > budget + 1e-9) break
+                    startIdx = prevStart
+                }
+                chosenLen = endIdx - startIdx
+                chosenStartIdx = startIdx
+            }
+
             val avgGross = (prefixGross[endIdx] - prefixGross[chosenStartIdx]) / chosenLen
             val avgNet = (prefixNet[endIdx] - prefixNet[chosenStartIdx]) / chosenLen
             val winEuro = prefixEuro[endIdx] - prefixEuro[chosenStartIdx]
+            val winDurationH = (rasterSlots[endIdx - 1].endMinutes - rasterSlots[chosenStartIdx].startMinutes) / 60.0
+            val effectivePowerKw = if (rasterSlots.isNotEmpty() && winDurationH > 0 && rasterSlots[0].grossCt > 0.0) {
+                (rasterSlots[0].slotCostEuro / (rasterSlots[0].grossCt / 100.0)) / (raster / 60.0)
+            } else config.estimatedPowerKw
+            val winKwh = effectivePowerKw * winDurationH
+            val modPct = if (config.autoPowerModulationEnabled) {
+                (effectivePowerKw / 2.40 * 100.0).coerceIn(20.0, 100.0)
+            } else 0.0
 
             return listOf(
                 TimeWindow(
@@ -390,7 +483,10 @@ class SwitchProgramScheduler(
                     setpoint = config.heatingOnSetpoint,
                     averageGrossCtPerKwh = avgGross,
                     averageSpotNetCtPerKwh = avgNet,
-                    estimatedWindowCostEuro = winEuro
+                    estimatedWindowCostEuro = winEuro,
+                    estimatedElectricityKwh = winKwh,
+                    estimatedAveragePowerKw = effectivePowerKw,
+                    estimatedModulationPct = modPct
                 )
             )
         }
@@ -469,6 +565,14 @@ class SwitchProgramScheduler(
                 val avgGross = (prefixGross[endIdx] - prefixGross[startIdx]) / len
                 val avgNet = (prefixNet[endIdx] - prefixNet[startIdx]) / len
                 val winEuro = prefixEuro[endIdx] - prefixEuro[startIdx]
+                val winDurationH = (rasterSlots[endIdx - 1].endMinutes - rasterSlots[startIdx].startMinutes) / 60.0
+                val effectivePowerKw = if (rasterSlots.isNotEmpty() && winDurationH > 0 && rasterSlots[0].grossCt > 0.0) {
+                    (rasterSlots[0].slotCostEuro / (rasterSlots[0].grossCt / 100.0)) / (raster / 60.0)
+                } else config.estimatedPowerKw
+                val winKwh = effectivePowerKw * winDurationH
+                val modPct = if (config.autoPowerModulationEnabled) {
+                    (effectivePowerKw / 2.40 * 100.0).coerceIn(20.0, 100.0)
+                } else 0.0
 
                 windows.add(
                     TimeWindow(
@@ -479,7 +583,10 @@ class SwitchProgramScheduler(
                         setpoint = config.heatingOnSetpoint,
                         averageGrossCtPerKwh = avgGross,
                         averageSpotNetCtPerKwh = avgNet,
-                        estimatedWindowCostEuro = winEuro
+                        estimatedWindowCostEuro = winEuro,
+                        estimatedElectricityKwh = winKwh,
+                        estimatedAveragePowerKw = effectivePowerKw,
+                        estimatedModulationPct = modPct
                     )
                 )
                 currOn -= len
@@ -559,7 +666,24 @@ class SwitchProgramScheduler(
         )
     }
 
-    suspend fun syncSchedulesToHeatPump(
+    /**
+     * Computes a canonical signature string for the switch points of a specific day of the week.
+     * Used for detecting manual adjustments on the heat pump outside this application.
+     */
+    fun computeDaySignature(points: List<SwitchPoint>, dayOfWeekCode: String): String {
+        return points
+            .filter { it.dayOfWeek.equals(dayOfWeekCode, ignoreCase = true) }
+            .sortedBy { it.time }
+            .joinToString(";") { "${it.time}:${it.setpoint}" }
+    }
+
+    data class SyncDetailedResult(
+        val logs: List<String>,
+        val appliedHcSignatures: Map<String, String>,
+        val isSuccess: Boolean
+    )
+
+    suspend fun syncSchedulesToHeatPumpDetailed(
         apiClient: PointTApiClient,
         gatewayId: String,
         plans: List<DailySwitchSchedulePlan>,
@@ -567,7 +691,7 @@ class SwitchProgramScheduler(
         dhwId: String = "dhw1",
         dryRun: Boolean = true,
         currentMinuteOfDay: Int? = null
-    ): List<String> {
+    ): SyncDetailedResult {
         val logs = mutableListOf<String>()
         val prefix = if (dryRun) "[DRY-RUN]" else "[LIVE-SYNC]"
         val sliderTemp = config.targetHeatingTempC
@@ -585,7 +709,8 @@ class SwitchProgramScheduler(
                     logs.add("   ${hcSp.dayOfWeek} ${hcSp.formatTimeHm()} (t=${hcSp.time}) -> Heating=$stateLabel, WarmWater=${dhwSp.setpoint}")
                 }
             }
-            return logs
+            val drySignatures = hcUpdatesByDay.mapValues { (day, pts) -> computeDaySignature(pts, day) }
+            return SyncDetailedResult(logs, drySignatures, isSuccess = true)
         }
 
         // 1. Read existing HC1 and DHW1 switchPrograms first so we match the hardware's exact setpoint names & raster
@@ -704,6 +829,35 @@ class SwitchProgramScheduler(
                 if (!dhwPutRes.ok && dhwPutRes.responseBody.isNotBlank()) "\n   Err: ${dhwPutRes.responseBody}" else ""
         )
 
-        return logs
+        val appliedSignatures = hcUpdatesByDay.mapValues { (day, points) ->
+            computeDaySignature(points, day)
+        }
+        val isSuccess = hcPutRes.ok && dhwPutRes.ok
+
+        return SyncDetailedResult(
+            logs = logs,
+            appliedHcSignatures = appliedSignatures,
+            isSuccess = isSuccess
+        )
+    }
+
+    suspend fun syncSchedulesToHeatPump(
+        apiClient: PointTApiClient,
+        gatewayId: String,
+        plans: List<DailySwitchSchedulePlan>,
+        hcId: String = "hc1",
+        dhwId: String = "dhw1",
+        dryRun: Boolean = true,
+        currentMinuteOfDay: Int? = null
+    ): List<String> {
+        return syncSchedulesToHeatPumpDetailed(
+            apiClient = apiClient,
+            gatewayId = gatewayId,
+            plans = plans,
+            hcId = hcId,
+            dhwId = dhwId,
+            dryRun = dryRun,
+            currentMinuteOfDay = currentMinuteOfDay
+        ).logs
     }
 }
