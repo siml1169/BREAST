@@ -83,7 +83,7 @@ The app interfaces directly with Bosch's **PointT Cloud API** (`pointt-api.bosch
 
 ### 5. Electricity Tariff Compositor & Multi-Model Pricing
 * **Dynamic EPEX Spot Compositor:** Allows manual calibration of electricity contract components:
-  $$\text{Total Gross} = (\text{Spot}_{\text{net}} + \text{Base Working Price}_{\text{net}}) \times (1 + \text{VAT}\%) + \text{Monthly Base Fee}$$
+  $$P_{\text{gross}} = (P_{\text{spot}} + P_{\text{base}}) \times (1 + r_{\text{VAT}}) + F_{\text{monthly}}$$
 * **Direct Precision Text Input Boxes:** Replaces coarse sliders with clean decimal input boxes (`EditText`) across all pricing parameters (e.g., `21.3446 ct/kWh net` base working price, `13.80 €/month` base fee, `19.0%` VAT). Supports European comma `,` and standard dot `.` keypad input without touch slider friction.
 * **Configurable VAT Adjuster:** Features direct decimal input and one-tap regional presets (`0% Exempt`, `7% Reduced`, `19% Germany`, `20% Austria`) with real-time formula recalculation and gross rate preview.
 * **Simplified Peak / Off-Peak (ToU HT/NT):** Supports two-tier electricity plans with direct text input for Peak (HT) and Off-Peak (NT) gross rates, configurable nocturnal off-peak timetable (e.g., 22:00 to 06:00), and all-day weekend off-peak toggle. Automatically synthesizes 15-minute price slots so downstream MPC optimizers steer heat pump runs into off-peak windows without external API dependencies.

@@ -83,7 +83,7 @@ Die App kommuniziert über **SingleKey ID OAuth2 + PKCE** direkt mit der **Point
 
 ### 5. Strompreis-Compositor & Flexible Tarifmodelle
 * **Dynamischer EPEX-Spot-Compositor:** Ermöglicht die manuelle Kalibrierung aller Stromvertragsbestandteile:
-  $$\text{Gesamt-Brutto} = (\text{Börse}_{\text{netto}} + \text{Arbeitspreis}_{\text{netto}}) \times (1 + \text{MwSt}\%) + \text{Monatlicher Grundpreis}$$
+  $$P_{\text{Brutto}} = (P_{\text{Spot}} + P_{\text{Arbeitspreis}}) \times (1 + r_{\text{MwSt}}) + F_{\text{Grundpreis}}$$
 * **Präzise Texteingabefelder (`EditText`):** Ersetzt ungenaue Schieberegler durch direkte numerische Eingabefelder für alle Preiskomponenten (z. B. `21,3446 ct/kWh netto` Arbeitspreis, `13,80 €/Monat` Grundpreis, `19,0%` MwSt.). Volle Unterstützung für deutsches Komma `,` und internationalen Dezimalpunkt `.`.
 * **Konfigurierbarer MwSt.-Adjuster:** Direkte prozentuale Texteingabe und Schnellauswahl (`0% Steuerbefreit`, `7% Ermäßigt`, `19% DE`, `20% AT`) mit Live-Formel- und Bruttoberechnungs-Vorschau.
 * **Vereinfachter Hoch-/Niedertarif (HT/NT / ToU):** Unterstützt Zweitarif-Modelle mit getrennt editierbaren HT- und NT-Bruttopreisen im Textfeld, anpassbarem Nachtzeitfenster (z. B. 22:00 bis 06:00 Uhr) und ganztägiger Wochenend-NT-Option. Synthetisiert 15-Minuten-Slots, sodass die MPC-Optimierung Heiztakte ohne externe Börsen-APIs in günstige NT-Zeiten verlegt.
