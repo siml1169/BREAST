@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo_badge.png" width="140" height="140" alt="BREAST Heatpump Logo" />
+</p>
+
 # BREAST — Bosch Reverse Engineered API Smart Tool for Heatpump (kurz: BREAST Heatpump)
 
 *Sprachen / Languages: [English](README.md) | **Deutsch** | [中文](README_ZH.md)*
