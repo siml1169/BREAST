@@ -12,7 +12,7 @@
 [![Gateway-Umgebung](https://img.shields.io/badge/Gateway--Umgebung-Bosch%20Connect--Key%20K30%20RF-purple.svg)]()
 [![State](https://img.shields.io/badge/Status-Einsatzbereit%20(Daily%20Driver)-success.svg)]()
 
-**BREAST Heatpump** (**B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**) ist eine native Android-Kotlin-App zur autonomen Optimierung von Schaltzeitplänen und Stromkosten für **Bosch- & Buderus-Luft/Wasser-Wärmepumpen** anhand dynamischer Day-Ahead-Börsenstrompreise (**EPEX Spot DE-LU** via Vattenfall ÖkoStrom Dynamik).
+**BREAST Heatpump** (**B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**) ist eine native Android-Kotlin-App zur autonomen Optimierung von Schaltzeitplänen und Stromkosten für **Bosch Luft/Wasser-Wärmepumpen** anhand dynamischer Day-Ahead-Börsenstrompreise (**EPEX Spot DE-LU** via Vattenfall ÖkoStrom Dynamik).
 
 Die App kommuniziert über **SingleKey ID OAuth2 + PKCE** direkt mit der **PointT Cloud-API** (`pointt-api.bosch-thermotechnology.com`), protokolliert hochauflösende Anlagentelemetrie in einer lokalen SQLite-Datenbank, visualisiert die physikalische **nichtlineare Buderus/Bosch HPC 410 Vorlauf-Heizkurve**, berechnet ein fortschrittliches **Modellprädiktives Gebäude-Energiebilanzmodell (MPC)** und arbeitet vollkommen autonom im Hintergrund.
 
