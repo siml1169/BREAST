@@ -12,7 +12,7 @@
 [![Dev Gateway](https://img.shields.io/badge/Dev%20Gateway-Bosch%20Connect--Key%20K30%20RF-purple.svg)]()
 [![State](https://img.shields.io/badge/Status-Daily%20Driver%20Usable-success.svg)]()
 
-**BREAST Heatpump** (**B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**) is a native Android Kotlin application designed to autonomously optimize the heating schedule and power consumption of **Bosch & Buderus Air-to-Water Heat Pumps** against dynamic day-ahead electricity spot market prices (**EPEX Spot DE-LU** via Vattenfall ÖkoStrom Dynamik).
+**BREAST Heatpump** (**B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**) is a native Android Kotlin application designed to autonomously optimize the heating schedule and power consumption of **Bosch Air-to-Water Heat Pumps** against dynamic day-ahead electricity spot market prices (**EPEX Spot DE-LU** via Vattenfall ÖkoStrom Dynamik).
 
 The app interfaces directly with Bosch's **PointT Cloud API** (`pointt-api.bosch-thermotechnology.com`) using **SingleKey ID OAuth2 + PKCE**, logs high-resolution system telemetry into an on-device SQLite database, accurately renders the physical **non-linear Buderus/Bosch HPC410 heating curve**, solves an advanced **Model Predictive Control (MPC) building energy balance model**, simulates the closed-loop control unit digital twin, and operates autonomously using Android background daemons.
 
