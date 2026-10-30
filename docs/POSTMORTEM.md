@@ -151,9 +151,13 @@ When normalized against other objectives into $[0, 1]$, shorter durations natura
 
 ### The Solution
 We redefined the budget objective to optimize **price arbitrage** (seeking the lowest electricity rate per delivered kWh) rather than minimizing duration:
+
 $$J_{\text{budget}} = \bar{c}_{\text{gross}} = \frac{1}{N} \sum_{t \in W} c_{\text{gross}}(t)$$
+
 combined with an explicit runtime deficit penalty:
+
 $$\text{Penalty}_{\text{deficit}} = 2.5 \cdot (\max(0, t_{\text{target}} - t_{\text{dur}}))^{1.6}$$
+
 This guarantees the optimizer maintains the user's requested runtime duration (e.g. 6.0h) while targeting the absolute lowest-price hours of the day.
 
 ---

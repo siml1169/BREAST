@@ -116,7 +116,11 @@ flowchart TD
   * **Karte 7 (Entwickler- / Diagnose-Konsole)**: Einklappbares Terminal, Telemetrie-Umschalter, Schieberegler für Aufzeichnungsfrequenz (`1 Min. .. 60 Min.`) und Datenbankverwaltung.
 * **`HeatingCurveChartView.kt` & `HeatingCurveFullscreenActivity.kt`**:
   * Visualisiert die exakte mathematische Kennlinie der Buderus/Bosch-Steuerung:
-    $$T_{\text{Vorlauf}} = T_{\text{Basis}} + \frac{T_{\text{Auslegung}} - T_{\text{Basis}}}{(-10 - 20)^\alpha} \cdot (T_{\text{Außen}} - 20)^\alpha + \Delta T_{\text{Parallel}}$$
+
+    ```math
+    T_{\text{Vorlauf}} = T_{\text{Basis}} + \frac{T_{\text{Auslegung}} - T_{\text{Basis}}}{(-10 - 20)^\alpha} \cdot (T_{\text{Außen}} - 20)^\alpha + \Delta T_{\text{Parallel}}
+    ```
+
   * Interaktive Querformat-Vollbildansicht mit Referenzkurven [1–5], stationären und transienten Messpunkten, Fadenkreuz-Markierung des aktuellen Betriebspunkts und bidirektional synchronisierter Kurvenauswahl.
 * **`SettingsActivity.kt`**:
   * **Stromtarif-Compositor & Multi-Tarif-Modelle**:
@@ -145,49 +149,77 @@ flowchart TD
 
 #### A. Ganzheitlicher Zeitplan-Optimierer (`HolisticScheduleOptimizer.kt`)
 * Implementiert einen **Modellprädiktiven Regler (MPC - Model Predictive Control)**, der kontinuierliche Betriebszeitfenster anhand einer mehrkriteriellen Zielfunktion bewertet:
-  $$J = w_{\text{budget}} \cdot J_{\text{budget}} + w_{\text{cop}} \cdot J_{\text{cop}} + w_{\text{comfort}} \cdot J_{\text{comfort}}$$
+
+  ```math
+  J = w_{\text{budget}} \cdot J_{\text{budget}} + w_{\text{cop}} \cdot J_{\text{cop}} + w_{\text{comfort}} \cdot J_{\text{comfort}}
+  ```
+
 * **Teilziele:**
-  1. **Budget-Nutzen ($J_{\text{budget}}$):** Formuliert als durchschnittlicher Strompreis pro kWh ($\bar{c}_{\text{brutto}}$) zzgl. Spitzenpreis-Arbitrage-Strafe und einer expliziten Laufzeitdefizit-Strafe:
-     $$\text{Strafe}_{\text{Defizit}} = 2.5 \cdot (\max(0, t_{\text{Ziel}} - t_{\text{Dauer}}))^{1.6}$$
+  1. **Budget-Nutzen ($``J_{\text{budget}}``$):** Formuliert als durchschnittlicher Strompreis pro kWh ($``\bar{c}_{\text{brutto}}``$) zzgl. Spitzenpreis-Arbitrage-Strafe und einer expliziten Laufzeitdefizit-Strafe:
+
+     ```math
+     \text{Strafe}_{\text{Defizit}} = 2.5 \cdot (\max(0, t_{\text{Ziel}} - t_{\text{Dauer}}))^{1.6}
+     ```
+
      Dadurch sucht der Optimierer die günstigsten Stunden für die gewünschte Laufzeit, anstatt die Heizdauer gierig auf Null zu kürzen.
-  2. **COP-Nutzen ($J_{\text{cop}}$):** Normierter thermodynamischer Wirkungsgrad, der wärmere Nachmittagsstunden bevorzugt.
-  3. **Komfort-Nutzen ($J_{\text{comfort}}$):** Bestraft Abweichungen der Raumtemperatur vom Sollwert basierend auf dem simulierten Gebäude-Wärmeverlust.
+  2. **COP-Nutzen ($``J_{\text{cop}}``$):** Normierter thermodynamischer Wirkungsgrad, der wärmere Nachmittagsstunden bevorzugt.
+  3. **Komfort-Nutzen ($``J_{\text{comfort}}``$):** Bestraft Abweichungen der Raumtemperatur vom Sollwert basierend auf dem simulierten Gebäude-Wärmeverlust.
 * **4 Optimierungs-Präferenzen & Proportionale Expansionskorridore:**
   * **Nicht-negative Laufzeitkorridore ($+0.0\text{ h}$ feste Untergrenze):** Über alle Modi hinweg strikt an der Zielvorgabe des Schiebereglers verankert; verhindert unerwünschte Stauchung oder Laufzeiteinbrüche bei milder Witterung.
-  * **Harmonisierte Quantisierung (Harmonized Quantizer):** Diskrete Schrittweite $Q = 0.5\text{ h}$ ($30\text{ Min.}$) synchronisiert stetige Expansionen $\Delta H = \text{round}\left(\frac{T_{\text{Ziel}} \cdot r}{Q}\right) \cdot Q$ mit den Regler-Schritten und den 15-Minuten-Raster-Slots.
-  * **Komfort-Priorität:** $w = [0.15, 0.25, 0.60]$, Expansionsrate $r = +20\%$, Korridor $[0.0\text{h}, \text{quantize}(0.20 \cdot T_{\text{Ziel}})]$. Minimiert Raumtemperaturschwankungen und verhindert Auskühlen des Estrichs während der Nutzungszeiten.
-  * **Ausgewogen (Empfohlen):** $w = [0.35, 0.35, 0.30]$, Expansionsrate $r = +25\%$, Korridor $[0.0\text{h}, \text{quantize}(0.25 \cdot T_{\text{Ziel}})]$. Harmonische Balance zwischen Börsenstrompreis, thermodynamischem COP-Hub und Wohnkomfort mit maßvoller Ausdehnung in günstige Sonnenstunden.
-  * **Effizienz-Priorität (COP / Bang for Buck):** $w = [0.15, 0.35, 0.50]$, Expansionsrate $r = +35\%$, Korridor $[0.0\text{h}, \text{quantize}(0.35 \cdot T_{\text{Ziel}})]$. Maximiert die abgegebene Nutzwärme pro Euro ($\frac{\text{COP}}{c_{\text{brutto}}}$) mit aktivem Laufzeit-Bonus für langes Fahren bei niedriger Inverter-Modulation ($25\%\text{–}35\%$) über die sonnenreichen Mittagsstunden ($10:00\text{–}16:30$) innerhalb des Budgets.
+  * **Harmonisierte Quantisierung (Harmonized Quantizer):** Diskrete Schrittweite $Q = 0.5\text{ h}$ ($30\text{ Min.}$) synchronisiert stetige Expansionen $``\Delta H = \text{round}\left(\frac{T_{\text{Ziel}} \cdot r}{Q}\right) \cdot Q``$ mit den Regler-Schritten und den 15-Minuten-Raster-Slots.
+  * **Komfort-Priorität:** $w = [0.15, 0.25, 0.60]$, Expansionsrate $r = +20\%$, Korridor $``[0.0\text{h}, \text{quantize}(0.20 \cdot T_{\text{Ziel}})]``$. Minimiert Raumtemperaturschwankungen und verhindert Auskühlen des Estrichs während der Nutzungszeiten.
+  * **Ausgewogen (Empfohlen):** $w = [0.35, 0.35, 0.30]$, Expansionsrate $r = +25\%$, Korridor $``[0.0\text{h}, \text{quantize}(0.25 \cdot T_{\text{Ziel}})]``$. Harmonische Balance zwischen Börsenstrompreis, thermodynamischem COP-Hub und Wohnkomfort mit maßvoller Ausdehnung in günstige Sonnenstunden.
+  * **Effizienz-Priorität (COP / Bang for Buck):** $w = [0.15, 0.35, 0.50]$, Expansionsrate $r = +35\%$, Korridor $``[0.0\text{h}, \text{quantize}(0.35 \cdot T_{\text{Ziel}})]``$. Maximiert die abgegebene Nutzwärme pro Euro ($``\frac{\text{COP}}{c_{\text{brutto}}}``$) mit aktivem Laufzeit-Bonus für langes Fahren bei niedriger Inverter-Modulation ($25\%\text{–}35\%$) über die sonnenreichen Mittagsstunden ($10:00\text{–}16:30$) innerhalb des Budgets.
   * **Budget-Priorität:** $w = [0.70, 0.15, 0.15]$, Expansionsrate $r = +0\%$. **Strikte nominale Laufzeitbindung** ($[0.0\text{h}, 0.0\text{h}]$ relativ zum Ziel-Laufzeit-Schieberegler). Wählt das absolut günstigste zusammenhängende Spot-Fenster exakt dieser Dauer ohne freiwillige Dehnung oder Stauchung.
 * **Doppelspurige 24h-Gesamtmetriken:** Trennt den aktiven Heizfenster-Verbrauch und dessen Kosten sauber vom 24-Stunden-Gesamttag unter Berücksichtigung der kontinuierlichen parasitären Grundlast ($50\text{ W}$ Fußboden-Umwälzpumpe und Elektronik).
 * **Abschnitt 5 im Thermodynamik-Audit-Modal:** Zeigt die dynamischen Korridor-Parameter, den Expansionsfaktor, die Quantisierungs-Schrittweite, Slot-Suchgrenzen und das gewählte Laufzeitdelta transparent an.
 * **Zwei-Stufen-Budgetbewertung & Marginal-Cost-Kantenbeschneidung:**
   * **Stufe 1 (Korridor-Bewertung):** Bewertet Kandidatenfenster strikt innerhalb des definierten Laufzeitkorridors. Passt ein Kandidat ins Budget `dailyBudgetEuro`, wird der beste Kandidat ausgewählt und `budgetCutMinutes = 0` gesetzt (keine fälschlichen Kürzungsanzeigen).
   * **Stufe 2 (Marginal-Cost-Kantenbeschneidung):** Nur wenn ausnahmslos jedes Fenster im Zielkorridor `dailyBudgetEuro` überschreitet, nimmt der Optimierer den günstigsten Korridor-Kandidaten und trimmt iterativ 15-Minuten-Slots an der Kante mit den höheren spezifischen Wärmekosten ab:
-    $$c_{\text{Wärme}}(t) = \frac{c_{\text{brutto}}(t)}{\text{COP}(t)}$$
-    Slots werden an der Startkante ($S$) gekürzt, wenn $c_{\text{Wärme}}(S) \ge c_{\text{Wärme}}(E - 1)$, andernfalls an der Endkante ($E - 1$), bis die geschätzten Kosten $\le \text{dailyBudgetEuro}$ sind (oder die Mindestlaufzeit von 90 Minuten erreicht ist). Setzt `isBudgetForcedCut = true` und meldet präzise `budgetCutMinutes`.
+
+    ```math
+    c_{\text{Wärme}}(t) = \frac{c_{\text{brutto}}(t)}{\text{COP}(t)}
+    ```
+
+    Slots werden an der Startkante ($S$) gekürzt, wenn $``c_{\text{Wärme}}(S) \ge c_{\text{Wärme}}(E - 1)``$, andernfalls an der Endkante ($E - 1$), bis die geschätzten Kosten $\le \text{dailyBudgetEuro}$ sind (oder die Mindestlaufzeit von 90 Minuten erreicht ist). Setzt `isBudgetForcedCut = true` und meldet präzise `budgetCutMinutes`.
 
 #### B. Physikalische Modelle & Digital Twin
 * **`ControlUnitSimulator.kt`**:
   * Closed-Loop-Digital-Twin zur exakten Nachbildung der internen Zustandsmaschine des Bosch HPC 410 / Rego-Reglers.
   * Bildet die Rücklauftemperaturführung anhand der Soll-Vorlaufkurve mit Einschalthysterese ($-1.2\text{ K}$) und Ausschalthysterese ($+0.5\text{ K}$) ab.
   * Estrich-Wärmedifferenzialgleichung (ODE):
-    $$C_s \frac{dT_s}{dt} = \dot{Q}_{\text{in}} - \dot{Q}_{\text{Boden}}$$
+
+    ```math
+    C_s \frac{dT_s}{dt} = \dot{Q}_{\text{in}} - \dot{Q}_{\text{Boden}}
+    ```
+
   * Berücksichtigt den elektrischen Standby-Verbrauch (15 W Ruheleistung).
 * **`BuildingEnergyBalanceModel.kt`**:
   * 3-Zustands-Wärmeträgheitsmodell des Gebäudes zur Berechnung der Auskühlrate:
-    $$Q_{\text{Verlust}}(t) = H \cdot (T_{\text{Innen}}(t) - T_{\text{Außen}}(t))$$
+
+    ```math
+    Q_{\text{Verlust}}(t) = H \cdot (T_{\text{Innen}}(t) - T_{\text{Außen}}(t))
+    ```
+
   * Simuliert die thermische Speicherfähigkeit des Estrichs und des 120L-Pufferspeichers während der Absenkzeiten.
 * **`CopThermodynamicModel.kt`**:
   * Berechnet den theoretischen Carnot-COP in Abhängigkeit vom Temperaturhub:
-    $$\text{COP}(t) = \eta_C \cdot \frac{T_{\text{Vorlauf}}(t) + 273.15}{T_{\text{Vorlauf}}(t) - T_{\text{Außen}}(t)}$$
-    wobei der Gütegrad $\eta_C \approx 0.45 - 0.52$ beträgt.
+
+    ```math
+    \text{COP}(t) = \eta_C \cdot \frac{T_{\text{Vorlauf}}(t) + 273.15}{T_{\text{Vorlauf}}(t) - T_{\text{Außen}}(t)}
+    ```
+
+    wobei der Gütegrad $``\eta_C \approx 0.45 - 0.52``$ beträgt.
 * **Empirische COP-Interpolation & Inverter-Dynamik**:
-  * Ersetzt statische Leistungsannahmen durch eine empirische thermodynamische Regression, kalibriert an den realen Monatsdaten der Wärmepumpe ($448\text{ kWh}_{\text{th}}$ Wärmeabgabe bei $64\text{ kWh}_{\text{el}}$ Verdichterstrom, Monats-COP $7.00$):
-    $$\text{COP}(\Delta T_{\text{Hub}}) = \frac{1}{0.0068 \cdot (T_{\text{Vorlauf}} - T_{\text{Außen}}) + 0.0062}$$
+  * Ersetzt statische Leistungsannahmen durch eine empirische thermodynamische Regression, kalibriert an den realen Monatsdaten der Wärmepumpe ($``448\text{ kWh}_{\text{th}}``$ Wärmeabgabe bei $``64\text{ kWh}_{\text{el}}``$ Verdichterstrom, Monats-COP $7.00$):
+
+    ```math
+    \text{COP}(\Delta T_{\text{Hub}}) = \frac{1}{0.0068 \cdot (T_{\text{Vorlauf}} - T_{\text{Außen}}) + 0.0062}
+    ```
+
     Verbindet milde Herbsttage ($\text{COP} \approx 8.70$ bei $16\text{ K}$ Hub) nahtlos mit tiefen Wintertagen ($\text{COP} = 4.09$ bei $35\text{ K}$ Hub).
-  * Berücksichtigt die Hardware-Mindestmodulation des CS7400iAW von **`28.0%`** ($\approx 25\text{ Hz}$), was bei $12^\circ\text{C}$ einer Mindestheizleistung von $\dot{Q}_{\text{min}} \approx 3.0\text{ kW}_{\text{th}}$ und $P_{\text{el}} \approx 0.35\text{ kW}$ entspricht.
-  * Berechnet die Verdichteraufnahme dynamisch und addiert die kontinuierliche parasitäre Dauerlast ($P_{\text{parasitär}} = 50\text{ W}$, ~$1.20\text{ kWh/Tag}$) für die Fußboden-Pumpe und Elektronik, inklusive Schnittstelle für externe Submeter-Messungen.
+  * Berücksichtigt die Hardware-Mindestmodulation des CS7400iAW von **`28.0%`** ($\approx 25\text{ Hz}$), was bei $12^\circ\text{C}$ einer Mindestheizleistung von $``\dot{Q}_{\text{min}} \approx 3.0\text{ kW}_{\text{th}}``$ und $``P_{\text{el}} \approx 0.35\text{ kW}``$ entspricht.
+  * Berechnet die Verdichteraufnahme dynamisch und addiert die kontinuierliche parasitäre Dauerlast ($``P_{\text{parasitär}} = 50\text{ W}``$, ~ $1.20\text{ kWh/Tag}$) für die Fußboden-Pumpe und Elektronik, inklusive Schnittstelle für externe Submeter-Messungen.
 
 #### C. Statischer Planer (`SwitchProgramScheduler.kt`)
 * Teilt den Tag in 15-Minuten-Zeitschlitze (`RasterSlot`) passend zu den EPEX Spot Day-Ahead-Tarifen ein.
@@ -201,25 +233,33 @@ flowchart TD
 * **`HeatPumpTelemetrySnapshot.kt`**: Unveränderliches Datenmodell für Außen-, Vorlauf-, Rücklauf- und Kondensatortemperatur, $\Delta T$, Modulationsgrad (%), Wärmeanforderung (`ch`, `dhw`, `idle`) und stündlichen Strompreis.
 * **`SqliteTelemetryStore.kt`**: SQLite-Zeitreihendatenbank (`breast_telemetry.db`) mit Index auf `epoch_seconds` für schnelle Bereichsabfragen und CSV-Export.
 * **`HeatingCurveAnalyzer.kt`**:
-  * Vergleicht Betriebspunkte mit Bosch-Fußbodenspezifikationen und ermittelt die Abkühlrate ($\Delta T_{\text{Rücklauf}} / \Delta t$) im Absenkbetrieb.
+  * Vergleicht Betriebspunkte mit Bosch-Fußbodenspezifikationen und ermittelt die Abkühlrate ($``\Delta T_{\text{Rücklauf}} / \Delta t``$) im Absenkbetrieb.
   * **Solltemperatur-Konsistenzfilter**: Filtert historische Telemetriezeilen heraus, bei denen die Zieltemperatur abweichend eingestellt oder transient war, um saubere Gleichgewichtskurven zu gewährleisten.
   * Leitet nächtliche Abkühlungsberechnungen direkt an `SetbackHeatLossEstimator` mit strikter astronomischer Filterung weiter.
 * **`SetbackHeatLossEstimator.kt`**:
   * **NOAA-Astronomisches Sonnenstandsmodell**: Ermittelt genauen Sonnenuntergang und -aufgang nach NOAA-Gleichungen; erfordert strikt $\ge 2\text{ Stunden}$ nach Sonnenuntergang, um solare Strahlungseffekte und Wandwärmespeicherung vollständig auszuschließen. Überbrückt Mitternachtsgrenzen nahtlos zu zusammenhängenden physikalischen Nachtblöcken (z. B. 19:00 bis 04:15 Uhr).
-  * **Strikte Verifikation des Absenkbetriebs**: Prüft, dass die Anlage echt im Absenkbetrieb läuft ($T_{\text{Soll}} \le 18.5^\circ\text{C}$ oder $T_{\text{Soll}} \le T_{\text{Komfort}} - 2.0\text{ K}$, Kompressor AUS, Modulation $0\%$, keine Heiz-/Warmwasseranforderung, Hydraulikkreis ausgeglichen $\le 1.5\text{ K}$). Bricht sofort ab, sobald der Komfortbetrieb wieder einsetzt (z. B. um 04:15 Uhr CET).
+  * **Strikte Verifikation des Absenkbetriebs**: Prüft, dass die Anlage echt im Absenkbetrieb läuft ($``T_{\text{Soll}} \le 18.5^\circ\text{C}``$ oder $``T_{\text{Soll}} \le T_{\text{Komfort}} - 2.0\text{ K}``$, Kompressor AUS, Modulation $0\%$, keine Heiz-/Warmwasseranforderung, Hydraulikkreis ausgeglichen $\le 1.5\text{ K}$). Bricht sofort ab, sobald der Komfortbetrieb wieder einsetzt (z. B. um 04:15 Uhr CET).
   * **Modell 3: Dynamischer 2R2C Zustandsraum-Beobachter**: Unterscheidet kontinuierlich zwischen aktiver Estrich-Pufferentladung und gekoppelter Gesamthaus-Gleichgewichtsentladung:
-    $$\alpha = \left(1.0 - \frac{\max(0.0, T_{\text{Rücklauf, avg}} - T_{\text{Komfort}})}{\Delta T_{\text{Ladung}}}\right).coerceIn(0.0, 1.0)$$
-    $$C_{\text{eff}} = C_{\text{Estrich}} + \alpha \cdot C_{\text{Innen}}$$
-    Bei warmem Estrich ($T_{\text{Rücklauf}} \ge T_{\text{Komfort}} + 1.0\text{ K}$) gilt $C_{\text{eff}} = C_{\text{Estrich}} = 4.8\text{ kWh/K}$. Bei abgekühltem Gebäude im Gleichgewicht mit der Raumluft ($T_{\text{Rücklauf}} \le T_{\text{Komfort}}$) kühlt die gesamte thermische Masse gemeinsam ab ($C_{\text{eff}} = C_{\text{Estrich}} + C_{\text{Innen}} = 13.3\text{ kWh/K}$).
+
+    ```math
+    \alpha = \left(1.0 - \frac{\max(0.0, T_{\text{Rücklauf, avg}} - T_{\text{Komfort}})}{\Delta T_{\text{Ladung}}}\right).coerceIn(0.0, 1.0)
+    ```
+
+
+    ```math
+    C_{\text{eff}} = C_{\text{Estrich}} + \alpha \cdot C_{\text{Innen}}
+    ```
+
+    Bei warmem Estrich ($``T_{\text{Rücklauf}} \ge T_{\text{Komfort}} + 1.0\text{ K}``$) gilt $``C_{\text{eff}} = C_{\text{Estrich}} = 4.8\text{ kWh/K}``$. Bei abgekühltem Gebäude im Gleichgewicht mit der Raumluft ($``T_{\text{Rücklauf}} \le T_{\text{Komfort}}``$) kühlt die gesamte thermische Masse gemeinsam ab ($``C_{\text{eff}} = C_{\text{Estrich}} + C_{\text{Innen}} = 13.3\text{ kWh/K}``$).
   * **Vollständige lineare Regression nach kleinster Fehlerquadratsumme**: Berechnet Auskühlrate und Bestimmtheitsmaß $R^2$ über alle $N$ Messpunkte eines Blocks ($R^2 \ge 0.70$, Abkühlrate $\ge 0.04\text{ K/h}$).
   * **Mehrtägige $R^2 \times \text{Dauer}$ gewichtete Regression**: Fasst gültige Nachtabkühlungen über mehrere Nächte zu einem gewichteten Gebäude-Wärmeverlustwert ($W/K$) zusammen, formatiert in lokaler CET-Uhrzeit.
 * **`AdaptiveThermalObserver.kt`**:
   * **Kontinuierliches Online-Estrich-Lernen**: Lauscht am Live-Telemetriestrom und erfasst die Rücklauftemperaturabkühlung während der nächtlichen Absenkphasen ($\ge 2\text{ Stunden}$ nach Sonnenuntergang bis zum morgendlichen Wiederanlauf).
-  * **Exponential Moving Average (EMA) Parameteranpassung**: Berechnet kontinuierlich die Auskühlrate und aktualisiert den Gebäude-Wärmeverlustwert $H_{\text{bld}}$ sowie die Abkühlkonstante $\kappa$ via exponentieller Glättung ($\alpha_{\text{learn}} = 0.20$), sobald die statistische Güte $R^2 \ge 0.65$ erreicht.
+  * **Exponential Moving Average (EMA) Parameteranpassung**: Berechnet kontinuierlich die Auskühlrate und aktualisiert den Gebäude-Wärmeverlustwert $``H_{\text{bld}}``$ sowie die Abkühlkonstante $\kappa$ via exponentieller Glättung ($``\alpha_{\text{learn}} = 0.20``$), sobald die statistische Güte $R^2 \ge 0.65$ erreicht.
   * **Closed-Loop-Modellkopplung**: Injiziert die live gemessene und prognostizierte Estrich-Rücklauftemperatur direkt in das `BuildingEnergyBalanceModel`, um die thermische Energiebedarfsfunktion ohne manuelle Nachjustierung kontinuierlich zu verfeinern.
 * **Parasitäre elektrische Dauerlast & Submeter-Kalibrierung**:
   * Nicht vom internen Kompressor-Shunt erfasste Dauerlasten (sekundäre Fußboden-Umwälzpumpe ~25W, CUHP- und K30-Elektronik ~15W) werden sauber vom Kältekreis entkoppelt.
-  * Standardisierter großzügiger Daumenwert: $P_{\text{parasitär}} = 50\text{ W}$ kontinuierlich (~$1.2\text{ kWh/Tag}$).
+  * Standardisierter großzügiger Daumenwert: $``P_{\text{parasitär}} = 50\text{ W}``$ kontinuierlich (~ $1.2\text{ kWh/Tag}$).
   * Integrierte dedizierte Kalibrierungsvariable in `UserSettingsStore` und `HolisticOptimizationConfig` zur Übernahme realer Messwerte externer Stromzähler (z. B. Shelly 3EM, Eastron SDM).
 
 ---

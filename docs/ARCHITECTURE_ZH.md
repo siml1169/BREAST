@@ -112,11 +112,13 @@ flowchart TD
     * 动态功率模型与平均吸入电功率输入框（kW），支持自动变频功率调制（`Auto (~0.6kW)`）或手动固定数值覆盖。
     * 配置了即时 `TextWatcher` 文本监听器，输入即刻落盘保存，无需用户手动收起键盘或移开焦点。
   * **卡片 5（后台自动化与 EPEX 现货同步）**：每小时守护进程总开关、系统电量无限制优化快捷跳转、全周 7 天热泵日程检查器。
-  * **卡片 6（供热特性曲线与实时工况遥测）**：嵌入式交互特性曲线图与室外温、供水温、回水温、温差 $\Delta T$、压缩机调制百分比等传感器标签。
+  * **卡片 6（供热特性曲线与实时工况遥测）**：嵌入式交互特性曲线图与室外温、供水温、回水温、温差 $\Delta T$, 压缩机调制百分比等传感器标签。
   * **卡片 7（开发者控制台）**：可折叠折叠面板，包含遥测采集主开关、高频采样周期滑块（`1 分钟 .. 60 分钟`）与本地 SQLite 数据库清空工具。
 * **`HeatingCurveChartView.kt` 与 `HeatingCurveFullscreenActivity.kt`**：
   * 精确绘制博世/布德鲁斯官方非线性物理供热曲线数学模型：
-    $$T_{\text{supply}} = T_{\text{base}} + \frac{T_{\text{design}} - T_{\text{base}}}{(-10 - 20)^\alpha} \cdot (T_{\text{out}} - 20)^\alpha + \Delta T_{\text{shift}}$$
+    ```math
+    T_{\text{supply}} = T_{\text{base}} + \frac{T_{\text{design}} - T_{\text{base}}}{(-10 - 20)^\alpha} \cdot (T_{\text{out}} - 20)^\alpha + \Delta T_{\text{shift}}
+    ```
   * 横屏全屏模式支持 HPC 410 官方标准参考曲线 [1–5]、稳态工况点与瞬态升温散点、当前工况十字标尺，并与主界面图表持久化双向联动同步。
 * **`SettingsActivity.kt`**：
   * **电价模型合成器与多元电价支持**：
@@ -141,53 +143,67 @@ flowchart TD
 ### 2.2 优化计算引擎 (`de.breast.optimizer`)
 
 > [!NOTE]
-> 有关建筑物平衡零线锚点（$\Delta t = 0$）、净套利不等式边界、地暖砂浆层蓄热相移延迟（2.5 小时）以及德国动态浮动电价税费结构的完整物理与数学推导，请参阅专用系统技术规格书：[HEAT_PUMP_OPTIMIZATION_PLAN.md](HEAT_PUMP_OPTIMIZATION_PLAN.md)。
+> 有关建筑物平衡零线锚点 ($\Delta t = 0$) 、净套利不等式边界、地暖砂浆层蓄热相移延迟（2.5 小时）以及德国动态浮动电价税费结构的完整物理与数学推导，请参阅专用系统技术规格书：[HEAT_PUMP_OPTIMIZATION_PLAN.md](HEAT_PUMP_OPTIMIZATION_PLAN.md)。
 
 #### A. 全局统筹优化器 (`HolisticScheduleOptimizer.kt`)
 * 基于**模型预测控制（MPC）**算法架构，遍历全天所有候选连续开机运行窗口，通过多目标效用函数进行综合寻优：
-  $$J = w_{\text{budget}} \cdot J_{\text{budget}} + w_{\text{cop}} \cdot J_{\text{cop}} + w_{\text{comfort}} \cdot J_{\text{comfort}}$$
+  ```math
+  J = w_{\text{budget}} \cdot J_{\text{budget}} + w_{\text{cop}} \cdot J_{\text{cop}} + w_{\text{comfort}} \cdot J_{\text{comfort}}
+  ```
 * **多目标子项数学定义：**
-  1. **经济效用 ($J_{\text{budget}}$)**：定义为窗口内每度电平均花费（$\bar{c}_{\text{gross}}$，欧分/kWh）结合晚间电价高峰溢价惩罚，并引入显式的欠充运行时长惩罚：
-     $$\text{Penalty}_{\text{deficit}} = 2.5 \cdot (\max(0, t_{\text{target}} - t_{\text{actual}}))^{1.6}$$
+  1. **经济效用 ($J_{\text{budget}}$)**：定义为窗口内每度电平均花费 ($\bar{c}_{\text{gross}}$, 欧分/kWh) 结合晚间电价高峰溢价惩罚，并引入显式的欠充运行时长惩罚：
+     ```math
+     \text{Penalty}_{\text{deficit}} = 2.5 \cdot (\max(0, t_{\text{target}} - t_{\text{actual}}))^{1.6}
+     ```
      引导优化器在满足用户目标采暖时长的前提下精准锁定最廉价的电价低谷，避免因贪婪最小化绝对金额而发生时长严重缩水。
   2. **能效效用 ($J_{\text{cop}}$)**：归一化热泵能效指数，优先偏向室外气温较高的午后窗口以降低压缩机扬程。
   3. **舒适度效用 ($J_{\text{comfort}}$)**：基于建筑物散热模拟，严厉惩罚室内温度低于设定目标的降温区间。
 * **四种预设偏好模式与比例扩展走廊：**
-  * **非负弹性走廊（$+0.0\text{ h}$ 刚性底线）**：全模式严格将最小运行走廊硬性锚定在用户滑块设定时长，坚决杜绝温和天气下时长自发收缩或塌陷。
+  * **非负弹性走廊 ($+0.0\text{ h}$ 刚性底线) **：全模式严格将最小运行走廊硬性锚定在用户滑块设定时长，坚决杜绝温和天气下时长自发收缩或塌陷。
   * **调度器步长量化协调（Harmonized Quantizer）**：离散化基准步长 $Q = 0.5\text{ h}$（30 分钟）将连续比例扩展公式 $\Delta H = \text{round}\left(\frac{T_{\text{set}} \cdot r}{Q}\right) \cdot Q$ 与界面调节滑块及 15 分钟栅格槽位无缝对齐。
-  * **舒适优先（Comfort Priority）**：$w = [0.15, 0.25, 0.60]$，扩展比例 $r = +20\%$，走廊区间 $[0.0\text{h}, \text{quantize}(0.20 \cdot T_{\text{set}})]$。极致平稳室内体感，杜绝居住时段地面发凉。
-  * **均衡模式（Balanced，推荐）**：$w = [0.35, 0.35, 0.30]$，扩展比例 $r = +25\%$，走廊区间 $[0.0\text{h}, \text{quantize}(0.25 \cdot T_{\text{set}})]$。在现货电价、卡诺 COP 能效提振与室内舒适度之间取得最佳平衡，适度向上吸纳午间太阳能光伏低电价时段。
-  * **能效优先（Efficiency / Bang for Buck）**：$w = [0.15, 0.35, 0.50]$，扩展比例 $r = +35\%$，走廊区间 $[0.0\text{h}, \text{quantize}(0.35 \cdot T_{\text{set}})]$。最大化每欧元实际产热量（$\frac{\text{COP}}{c_{\text{gross}}}$），引入显式时长奖励项，鼓励在正午及午后光热最高峰（$10:00\text{–}16:30$）以轻载变频（$25\%\text{–}35\%$）长周期平稳巡航，同时完全受控于预算。
-  * **预算优先（Budget Priority）**：$w = [0.70, 0.15, 0.15]$，扩展比例 $r = +0\%$。**严格标称时长锁定**（$[0.0\text{h}, 0.0\text{h}]$，绝对锁定用户设定的目标时长滑块），在全天寻找电价最低的连续窗口，杜绝非预算驱动的随意时长伸缩。
-* **双轨 24 小时全天总能耗核算**：明确将主加热时段（Window）能耗及费用与包含全天 24 小时二级地暖泵及控制板能耗（$50\text{ W}$ 寄生基线功耗）的整日总能耗清晰双轨展示。
+  * **舒适优先（Comfort Priority）**： $w = [0.15, 0.25, 0.60]$, 扩展比例 $r = +20\%$, 走廊区间 $[0.0\text{h}, \text{quantize}(0.20 \cdot T_{\text{set}})]$。极致平稳室内体感，杜绝居住时段地面发凉。
+  * **均衡模式（Balanced，推荐）**： $w = [0.35, 0.35, 0.30]$, 扩展比例 $r = +25\%$, 走廊区间 $[0.0\text{h}, \text{quantize}(0.25 \cdot T_{\text{set}})]$。在现货电价、卡诺 COP 能效提振与室内舒适度之间取得最佳平衡，适度向上吸纳午间太阳能光伏低电价时段。
+  * **能效优先（Efficiency / Bang for Buck）**： $w = [0.15, 0.35, 0.50]$, 扩展比例 $r = +35\%$, 走廊区间 $[0.0\text{h}, \text{quantize}(0.35 \cdot T_{\text{set}})]$。最大化每欧元实际产热量 ($\frac{\text{COP}}{c_{\text{gross}}}$) ，引入显式时长奖励项，鼓励在正午及午后光热最高峰 ($10:00\text{–}16:30$) 以轻载变频 ($25\%\text{–}35\%$) 长周期平稳巡航，同时完全受控于预算。
+  * **预算优先（Budget Priority）**： $w = [0.70, 0.15, 0.15]$, 扩展比例 $r = +0\%$。**严格标称时长锁定** ($[0.0\text{h}, 0.0\text{h}]$, 绝对锁定用户设定的目标时长滑块) ，在全天寻找电价最低的连续窗口，杜绝非预算驱动的随意时长伸缩。
+* **双轨 24 小时全天总能耗核算**：明确将主加热时段（Window）能耗及费用与包含全天 24 小时二级地暖泵及控制板能耗 ($50\text{ W}$ 寄生基线功耗) 的整日总能耗清晰双轨展示。
 * **热力学审计弹窗第 5 节**：实时展示动态走廊配置参数、模式扩展比例、量化步长、时隙搜索范围及最终执行的时长增量。
 * **两阶段预算评估与边际成本边缘切削（Marginal Cost Edge Shaving）：**
   * **第一阶段（走廊评估）**：严格在既定时长走廊内寻找最优候选窗口。只要有走廊窗口未超出 `dailyBudgetEuro`，立即选定最优窗口并设置 `budgetCutMinutes = 0`（杜绝虚假预算截断上报）。
-  * **第二阶段（边际成本边缘切削）**：仅当走廊内的所有候选窗口均突破 `dailyBudgetEuro` 时触发。优化器以走廊内绝对电费最低的候选窗口为基准，比较窗口首端（$S$）与尾端（$E-1$）单位有效热量的边际购电成本：
-    $$c_{\text{heat}}(t) = \frac{c_{\text{gross}}(t)}{\text{COP}(t)}$$
+  * **第二阶段（边际成本边缘切削）**：仅当走廊内的所有候选窗口均突破 `dailyBudgetEuro` 时触发。优化器以走廊内绝对电费最低的候选窗口为基准，比较窗口首端 ($S$) 与尾端 ($E-1$) 单位有效热量的边际购电成本：
+    ```math
+    c_{\text{heat}}(t) = \frac{c_{\text{gross}}(t)}{\text{COP}(t)}
+    ```
     若 $c_{\text{heat}}(S) \ge c_{\text{heat}}(E - 1)$ 则切除起始端 15 分钟槽位，否则切除末端 15 分钟槽位，循环迭代直至预估总电费 $\le \text{dailyBudgetEuro}$（或触及 90 分钟最小连续运行防频繁启停底线）。标记 `isBudgetForcedCut = true` 并精准计算记录 `budgetCutMinutes`。
 
 #### B. 物理热力学仿真模型与数字孪生
 * **`ControlUnitSimulator.kt`（闭环控制器数字孪生）**：
   * 深度重构博世 HPC 410 / Rego 控制器底层状态机。
-  * 严格遵循基于供水目标曲线的回水温控逻辑，包含回水切入启机滞后（$-1.2\text{ K}$）与超温停机（$+0.5\text{ K}$）迟滞区间。
+  * 严格遵循基于供水目标曲线的回水温控逻辑，包含回水切入启机滞后 ($-1.2\text{ K}$) 与超温停机 ($+0.5\text{ K}$) 迟滞区间。
   * 求解混凝土砂浆层动态热传导常微分方程（ODE）：
-    $$C_s \frac{dT_s}{dt} = \dot{Q}_{\text{in}} - \dot{Q}_{\text{floor}}$$
+    ```math
+    C_s \frac{dT_s}{dt} = \dot{Q}_{\text{in}} - \dot{Q}_{\text{floor}}
+    ```
   * 仿真停机待机电气底噪基载功耗（15 W）。
 * **`BuildingEnergyBalanceModel.kt`（建筑物热平衡模型）**：
-  * 三状态建筑物热惰性模型，动态计算围护结构散热速率（$T_{\text{in}}$ 为室内温度，$T_{\text{out}}$ 为室外温度）：
-    $$Q_{\text{loss}}(t) = H \cdot (T_{\text{in}}(t) - T_{\text{out}}(t))$$
+  * 三状态建筑物热惰性模型，动态计算围护结构散热速率 ($T_{\text{in}}$ 为室内温度, $T_{\text{out}}$ 为室外温度) ：
+    ```math
+    Q_{\text{loss}}(t) = H \cdot (T_{\text{in}}(t) - T_{\text{out}}(t))
+    ```
   * 仿真停机保温阶段地暖水泥砂浆层与 120L 缓冲水箱的温度衰减历程。
 * **`CopThermodynamicModel.kt`（热泵 COP 热力学模型）**：
-  * 基于卡诺逆循环理论计算理论 COP 与温升扬程关联（$T_{\text{supply}}$ 为供水温度）：
-    $$\text{COP}(t) = \eta_C \cdot \frac{T_{\text{supply}}(t) + 273.15}{T_{\text{supply}}(t) - T_{\text{out}}(t)}$$
+  * 基于卡诺逆循环理论计算理论 COP 与温升扬程关联 ($T_{\text{supply}}$ 为供水温度) ：
+    ```math
+    \text{COP}(t) = \eta_C \cdot \frac{T_{\text{supply}}(t) + 273.15}{T_{\text{supply}}(t) - T_{\text{out}}(t)}
+    ```
     其中系统热力学完善度取 $\eta_C \approx 0.45 - 0.52$。
 * **经验 COP 倒数插值与变频动态学**：
-  * 摒弃僵化的固定功率假设，基于博世官方能源数据库整月实测数据（全月制热 $448\text{ kWh}_{\text{th}}$、压缩机耗电 $64\text{ kWh}_{\text{el}}$、平均月度 COP $7.00$）进行倒数扬程热力学回归：
-    $$\text{COP}(\Delta T_{\text{lift}}) = \frac{1}{0.0068 \cdot (T_{\text{supply}} - T_{\text{out}}) + 0.0062}$$
-    连续平滑连接温和秋季（$16\text{ K}$ 扬程下 COP 达 $\approx 8.70$）与深冬极寒（$35\text{ K}$ 扬程下 COP $4.09$）。
-  * 严谨模拟博世 CS7400iAW 变频压缩机 **`28.0%`** 的物理最低调制下限（约 $25\text{ Hz}$），对应秋季巡航工况制热量 $\dot{Q}_{\text{min}} \approx 3.0\text{ kW}_{\text{th}}$、压缩机电功率仅 $P_{\text{el}} \approx 0.35\text{ kW}$。
-  * 动态计算压缩机耗电并叠加常开基准寄生功耗（$P_{\text{parasitic}} = 50\text{ W}$，折合约 $1.20\text{ kWh/day}$），覆盖地暖泵及控制板能耗，并预留独立分电表参数校准接口。
+  * 摒弃僵化的固定功率假设，基于博世官方能源数据库整月实测数据 (全月制热 $``448\text{ kWh}_{\text{th}}``$, 压缩机耗电 $``64\text{ kWh}_{\text{el}}``$, 平均月度 COP $7.00$) 进行倒数扬程热力学回归：
+    ```math
+    \text{COP}(\Delta T_{\text{lift}}) = \frac{1}{0.0068 \cdot (T_{\text{supply}} - T_{\text{out}}) + 0.0062}
+    ```
+    连续平滑连接温和秋季 ($16\text{ K}$ 扬程下 COP 达 $\approx 8.70$) 与深冬极寒 ($35\text{ K}$ 扬程下 COP $4.09$) 。
+  * 严谨模拟博世 CS7400iAW 变频压缩机 **`28.0%`** 的物理最低调制下限 (约 $25\text{ Hz}$) ，对应秋季巡航工况制热量 $``\dot{Q}_{\text{min}} \approx 3.0\text{ kW}_{\text{th}}``$, 压缩机电功率仅 $P_{\text{el}} \approx 0.35\text{ kW}$。
+  * 动态计算压缩机耗电并叠加常开基准寄生功耗 ($P_{\text{parasitic}} = 50\text{ W}$, 折合约 $1.20\text{ kWh/day}$) ，覆盖地暖泵及控制板能耗，并预留独立分电表参数校准接口。
 
 #### C. 静态规划调度器 (`SwitchProgramScheduler.kt`)
 * 将全天离散化为 96 个 15 分钟栅格槽位（`RasterSlot`）。
@@ -198,28 +214,32 @@ flowchart TD
 ---
 
 ### 2.3 遥测采集与热工诊断引擎 (`de.breast.telemetry`)
-* **`HeatPumpTelemetrySnapshot.kt`**：不可变时序数据实体，记录室外温、供水温、回水温、冷凝温度、温差 $\Delta T$、变频调制率（%）、当前负载需求（`ch` 地暖、`dhw` 热水、`idle` 待机）以及该时刻现货电价。
+* **`HeatPumpTelemetrySnapshot.kt`**：不可变时序数据实体，记录室外温、供水温、回水温、冷凝温度、温差 $\Delta T$, 变频调制率（%）、当前负载需求（`ch` 地暖、`dhw` 热水、`idle` 待机）以及该时刻现货电价。
 * **`SqliteTelemetryStore.kt`**：本地轻量级 SQLite 时序数据库（`breast_telemetry.db`），基于时间戳构建索引，支持毫秒级范围查询与一键导出标准 CSV。
 * **`HeatingCurveAnalyzer.kt`**：
-  * 对比工况点与博世官方地暖技术规范，并在停机工况下追踪回水温度自然衰减速率（$\Delta T_{\text{return}} / \Delta t$）评估建筑蓄热保温性能。
+  * 对比工况点与博世官方地暖技术规范，并在停机工况下追踪回水温度自然衰减速率 ($\Delta T_{\text{return}} / \Delta t$) 评估建筑蓄热保温性能。
   * **设定水温一致性纯净过滤**：剔除历史遥测中目标设定水温被手动修改或处于过渡态的脏数据行，确保供热曲线只基于稳态工况拟合。
   * 将夜间温降估算无缝委托给 `SetbackHeatLossEstimator` 进行严格天文黑夜与工况准入校验。
 * **`SetbackHeatLossEstimator.kt`**：
   * **NOAA 天文太阳天顶角物理算法**：精准解算用户经纬度日落及日出时刻；强制约束仅从日落后 $\ge 2\text{ h}$（2 小时）开始采纳样本，彻底消除日照辐射与外墙白天热惰性瞬态干扰。算法自动跨午夜无缝拼接连续降温区间（如 19:00 至次日 04:15）。
-  * **严格夜间回退（Setback）工况校验**：严密核验热泵真实处于低温回退状态（设定水温 $T_{\text{setpoint}} \le 18.5^\circ\text{C}$ 或 $\le T_{\text{comfort}} - 2.0\text{ K}$，压缩机关闭 $0\%$，地暖与生活热水均待机，水路回路完全均温 $\le 1.5\text{ K}$）。一旦舒适供暖恢复（如 04:15 CET），数据流立即截断，严禁舒适期混入。
+  * **严格夜间回退（Setback）工况校验**：严密核验热泵真实处于低温回退状态 (设定水温 $T_{\text{setpoint}} \le 18.5^\circ\text{C}$ 或 $\le T_{\text{comfort}} - 2.0\text{ K}$, 压缩机关闭 $0\%$, 地暖与生活热水均待机，水路回路完全均温 $\le 1.5\text{ K}$) 。一旦舒适供暖恢复（如 04:15 CET），数据流立即截断，严禁舒适期混入。
   * **模型 3：2R2C 状态空间动态热容观测器**：平滑解耦水泥找平层主动释热与全屋热平衡衰减物理过程：
-    $$\alpha = \left(1.0 - \frac{\max(0.0, T_{\text{return, avg}} - T_{\text{comfort}})}{\Delta T_{\text{charge}}}\right).\text{coerceIn}(0.0, 1.0)$$
-    $$C_{\text{eff}} = C_{\text{screed}} + \alpha \cdot C_{\text{indoor}}$$
-    当地面处于温热充热态（$T_{\text{return}} \ge T_{\text{comfort}} + 1.0\text{ K}$）时，$C_{\text{eff}} = C_{\text{screed}} = 4.8\text{ kWh/K}$。当地面已冷透降至室温（$T_{\text{return}} \le T_{\text{comfort}}$）时，全屋建筑外壳共同向外衰减，$C_{\text{eff}} = C_{\text{screed}} + C_{\text{indoor}} = 13.3\text{ kWh/K}$。
-  * **全区间最小二乘连续线性回归**：基于区段内全部 $N$ 个连续数据点最小二乘拟合降温速率与确定系数 $R^2$（$R^2 \ge 0.70$，降温速率 $\ge 0.04\text{ K/h}$）。
+    ```math
+    \alpha = \left(1.0 - \frac{\max(0.0, T_{\text{return, avg}} - T_{\text{comfort}})}{\Delta T_{\text{charge}}}\right).\text{coerceIn}(0.0, 1.0)
+    ```
+    ```math
+    C_{\text{eff}} = C_{\text{screed}} + \alpha \cdot C_{\text{indoor}}
+    ```
+    当地面处于温热充热态 ($T_{\text{return}} \ge T_{\text{comfort}} + 1.0\text{ K}$) 时, $C_{\text{eff}} = C_{\text{screed}} = 4.8\text{ kWh/K}$。当地面已冷透降至室温 ($T_{\text{return}} \le T_{\text{comfort}}$) 时，全屋建筑外壳共同向外衰减, $C_{\text{eff}} = C_{\text{screed}} + C_{\text{indoor}} = 13.3\text{ kWh/K}$。
+  * **全区间最小二乘连续线性回归**：基于区段内全部 $N$ 个连续数据点最小二乘拟合降温速率与确定系数 $R^2$ ($R^2 \ge 0.70$, 降温速率 $\ge 0.04\text{ K/h}$) 。
   * **多夜 $R^2 \times \text{duration}$ 加权回归**：跨多夜整合多段有效黑夜降温段，输出高可信度加权建筑热损失指标（W/K），并格式化为本地时区（CET）时间段展示。
 * **`AdaptiveThermalObserver.kt`**：
-  * **连续在线回水自适应学习**：监听实时遥测数据流，在夜间低温回退阶段（日落后 $\ge 2\text{ h}$ 直至次日清晨启机）持续追踪回水温度自然衰减过程。
-  * **指数移动平均（EMA）参数迭代**：实时拟合降温速率，在线更新建筑物散热系数 $H_{\text{bld}}$ 与衰减常数 $\kappa$（更新权重 $\alpha_{\text{learn}} = 0.20$），仅采纳确定系数 $R^2 \ge 0.65$ 的高置信度物理降温段。
+  * **连续在线回水自适应学习**：监听实时遥测数据流，在夜间低温回退阶段 (日落后 $\ge 2\text{ h}$ 直至次日清晨启机) 持续追踪回水温度自然衰减过程。
+  * **指数移动平均（EMA）参数迭代**：实时拟合降温速率，在线更新建筑物散热系数 $H_{\text{bld}}$ 与衰减常数 $\kappa$ (更新权重 $\alpha_{\text{learn}} = 0.20$) ，仅采纳确定系数 $R^2 \ge 0.65$ 的高置信度物理降温段。
   * **闭环模型参数注入**：将实时估算的水泥砂浆层回水温度直接注入 `BuildingEnergyBalanceModel`，持续校准需热量预测函数，实现零人工介入的自进化闭环。
 * **寄生基线功耗与独立电表校准架构**：
   * 将未计入博世内部电表的常开辅助负载（二级地暖循环水泵 ~25W、主板及网关控制底噪 ~15W）与压缩机主回路彻底解耦。
-  * 引入宽裕的 50W 经验常开基准功耗常数（$P_{\text{parasitic}} = 50\text{ W}$，折合约 $1.2\text{ kWh/day}$）。
+  * 引入宽裕的 50W 经验常开基准功耗常数 ($P_{\text{parasitic}} = 50\text{ W}$, 折合约 $1.2\text{ kWh/day}$) 。
   * 在 `UserSettingsStore` 与 `HolisticOptimizationConfig` 中提供预留校准变量，便于用户接入物理分路电表（如 Shelly 3EM、Eastron SDM）后直接进行实测参数覆写。
 
 ---
@@ -284,6 +304,6 @@ flowchart TD
 * **协同统一日程策略**：将地暖采暖与生活热水集中安排在全天最便宜的电价波谷窗口内协同运行，在最大化节省用电开销的同时，消除无序启停造成的设备机械疲劳损耗。
 
 ### 生活热水（DHW）加热周期结束后的水力切换与传感器降温物理机理
-* **表面管路快速降温假象**：在生活热水周期中，一次侧水路处于高温工况（$50^\circ\text{C}-58^\circ\text{C}$），而地暖回路在没有热量补充下持续向室内散热，回水温度自然回落至室温水平（$22^\circ\text{C}-25^\circ\text{C}$）。当热水烧满、电动三通换向阀旋转切回采暖侧时，一次侧循环水泵立即将缓冲水箱和地暖回水管中的低温水冲刷过室内塔温感探头（`T_supply`、`T_return`），导致测量温度在几十秒内从 $55^\circ\text{C}$ 暴跌至 $23^\circ\text{C}$。这纯属水路切换带来的传感器瞬态冲刷，并非热水箱失温。
+* **表面管路快速降温假象**：在生活热水周期中，一次侧水路处于高温工况 ($50^\circ\text{C}-58^\circ\text{C}$) ，而地暖回路在没有热量补充下持续向室内散热，回水温度自然回落至室温水平 ($22^\circ\text{C}-25^\circ\text{C}$) 。当热水烧满、电动三通换向阀旋转切回采暖侧时，一次侧循环水泵立即将缓冲水箱和地暖回水管中的低温水冲刷过室内塔温感探头（`T_supply`、`T_return`），导致测量温度在几十秒内从 $55^\circ\text{C}$ 暴跌至 $23^\circ\text{C}$。这纯属水路切换带来的传感器瞬态冲刷，并非热水箱失温。
 * **压缩机降频/停机与压力平衡延时**：在三通阀转动换向期间，主控电脑会指令压缩机降至最低频率或暂时停机，以防止系统高压管路突变触发高压保护（`HD-Wächter`）及板换热冲击。系统内建约 3 分钟的防频繁启停平衡停机保护时间。
-* **采暖再启动判定**：一旦地暖低温回水流经回水温度传感器（`TR1`/`TC0`），HPC 410 控制器比对发现当前回水温度远低于采暖曲线计算出的目标回水温度，且差值超过回水启停回差（$\ge 1.2\text{ K}$），因此平衡延时一过，控制器便会立即指令压缩机安全平稳重启，投入空间供暖循环。
+* **采暖再启动判定**：一旦地暖低温回水流经回水温度传感器（`TR1`/`TC0`），HPC 410 控制器比对发现当前回水温度远低于采暖曲线计算出的目标回水温度，且差值超过回水启停回差 ($\ge 1.2\text{ K}$) ，因此平衡延时一过，控制器便会立即指令压缩机安全平稳重启，投入空间供暖循环。

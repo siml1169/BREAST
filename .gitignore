@@ -10,3 +10,4 @@ gateway_resources_dump.json
 *.pcapng
 __pycache__/
 *.pyc
+scratch/
