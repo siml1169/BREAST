@@ -184,24 +184,24 @@ beautiful-heisenberg/
 * **Unit Tests:** **76 / 76 Passing**
 
 ### Running Unit Tests Locally
-From PowerShell in the project root:
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-$env:Path = "$env:JAVA_HOME\bin;" + $env:Path
-$gradle = "C:\Users\limuy\.gradle\wrapper\dists\gradle-9.5.0-bin\bvnork1r7n8i6kp5cnkibsc9q\gradle-9.5.0\bin\gradle.bat"
-& $gradle testDebugUnitTest
+Run unit tests from the project root:
+```bash
+./gradlew testDebugUnitTest
 ```
 
 ### Running on Device
-1. Open Android Studio and open the folder `c:\Users\limuy\Documents\antigravity\beautiful-heisenberg`.
+1. Clone the repository and open it in Android Studio:
+   ```bash
+   git clone https://github.com/siml1169/BREAST.git
+   ```
 2. Connect your Android phone via USB (or wireless ADB).
 3. Click **Run (`app`)** or install the pre-compiled `app-release.apk`.
 4. In the app, tap **Connect Bosch SingleKey ID**, authenticate once, and tap **Sync Lowest-Price Schedule Now**.
 
 ### Building the Distribution Release APK
 To assemble the signed production APK:
-```powershell
-& $gradle assembleRelease
+```bash
+./gradlew assembleRelease
 ```
 The compiled APK is output to `app/build/outputs/apk/release/app-release.apk`.
 

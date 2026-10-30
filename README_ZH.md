@@ -20,10 +20,10 @@
 
 #### A. 全局统筹优化引擎（MPC 与热力学模型预测控制）
 * **建筑能量平衡模型（`BuildingEnergyBalanceModel`）：** 实时仿真建筑室内热容蓄热与围护结构散热通量：
-  $$Q_{\text{损耗}}(t) = H \cdot (T_{\text{室内}}(t) - T_{\text{室外}}(t))$$
+  $$Q_{\text{loss}}(t) = H \cdot (T_{\text{in}}(t) - T_{\text{out}}(t))$$
   精准量化地暖水泥砂浆层与 120L 缓冲水箱在停机或低温回退阶段的自然温降。
 * **热泵 COP 热力学卡诺模型（`CopThermodynamicModel`）：** 刻画能效随室外气温与供水温差扬程的物理规律：
-  $$\text{COP}(t) = \eta_C \cdot \frac{T_{\text{供水}}(t) + 273.15}{T_{\text{供水}}(t) - T_{\text{室外}}(t)}$$
+  $$\text{COP}(t) = \eta_C \cdot \frac{T_{\text{supply}}(t) + 273.15}{T_{\text{supply}}(t) - T_{\text{out}}(t)}$$
   在电价相近区间优先选中气温较高的午后窗口，以最高热力学 COP 能效充热。
 * **闭环控制数字孪生仿真（`ControlUnitSimulator`）：** 精确仿真博世 HPC 410 / Rego 控制器的底层状态机逻辑，包含回水切入启机滞后（$-1.2\text{ K}$）与超温停机（$+0.5\text{ K}$）迟滞区间、混凝土砂浆常微分方程（ODE）传热计算及待机基准电耗。
 * **非负运行时间走廊（$+0.0\text{ h}$ 刚性底线）：** 用户设定的目标每日运行时长滑块在所有模式下均作为绝对底线生效。温和秋季天气下算法绝不会跌破滑块意图，同时保留单向正午光热扩展空间。
@@ -61,23 +61,23 @@
 
 ### 4. 交互式 HPC 410 供热曲线与实时工况遥测
 * **博世官方非线性物理曲线方程：** 抛弃简化的线性回归，精确绘制暖通厂家的指数型供水水温曲线：
-  $$T_{\text{供水}} = T_{\text{基准}} + \frac{T_{\text{设计}} - T_{\text{基准}}}{(-10 - 20)^\alpha} \cdot (T_{\text{室外}} - 20)^\alpha + \Delta T_{\text{平移}}$$
-  支持配置基准温度、设计温度（例如低温地暖 $-10^\circ\text{C}$ 时设计水温 $35^\circ\text{C}$）以及平移偏置（$K$）。
+  $$T_{\text{supply}} = T_{\text{base}} + \frac{T_{\text{design}} - T_{\text{base}}}{(-10 - 20)^\alpha} \cdot (T_{\text{out}} - 20)^\alpha + \Delta T_{\text{shift}}$$
+  支持配置基准水温 $T_{\text{base}}$、设计水温 $T_{\text{design}}$（例如低温地暖 $-10^\circ\text{C}$ 时设计水温 $35^\circ\text{C}$）以及平移偏置 $\Delta T_{\text{shift}}$（$\text{K}$）。
 * **全屏横屏可视化画布：** 轻触即可展开横屏大图，包含：
   * HPC 410 官方标准参考曲线 [1–5]。
   * 稳态平衡工况散点与开机初期瞬态散点。
-  * 实时工况十字标尺（$T_{\text{室外}}, T_{\text{供水}}$）。
+  * 实时工况十字标尺（$T_{\text{out}}, T_{\text{supply}}$）。
   * 曲线选择状态在全屏与主看板间双向保持同步。
 * **实时遥测看板：** 实时显示室外温度、供水温度、回水温度、供回水温差（$\Delta T$）、压缩机调制百分比（%）及机组工作状态（`ch` 地暖、`dhw` 热水、`idle` 待机）。
 * **经验建筑热损失辨识与在线自适应学习（`SetbackHeatLossEstimator` & `AdaptiveThermalObserver`）：**
   * **夜间回水降温在线持续学习（`AdaptiveThermalObserver`）：** 在夜间回退阶段实时监测回水温降，利用指数移动平均（EMA）在线更新建筑热损系数（$H_{\text{bld}}$）与降温速率（$\kappa$），并通过 $R^2 \ge 0.65$ 严格质量门槛过滤，动态指导 `BuildingEnergyBalanceModel` 修正开机升温需求。
-  * **严格 NOAA 天文级纯黑夜滤波：** 仅提取本地日落至少 $\ge 2\text{ 小时}$至次日日出之间的降温数据，彻底消除日光辐射与外立面白天蓄热的瞬态干扰。算法自动跨午夜无缝拼接连续降温区间（如 19:00 至次日 04:15）。
+  * **严格 NOAA 天文级纯黑夜滤波：** 仅提取本地日落至少 $\ge 2\text{ h}$（2 小时）至次日日出之间的降温数据，彻底消除日光辐射与外立面白天蓄热的瞬态干扰。算法自动跨午夜无缝拼接连续降温区间（如 19:00 至次日 04:15）。
   * **夜间回退（Setback）模式严格校验：** 严格要求机组处于降温回退状态（设定温度 $T_{\text{setpoint}} \le 18.5^\circ\text{C}$ 或 $\le T_{\text{comfort}} - 2.0\text{ K}$，压缩机关闭 $0\%$，地暖与生活热水均待机，水路回路完全均温 $\le 1.5\text{ K}$）。一旦舒适供暖恢复（如 04:15 CET），数据流立即截断，杜绝舒适期混入。
   * **2R2C 动态参与热容模型：** 连续平滑解耦水泥找平层主动释热与全屋热平衡衰减过程。当地面温热（$T_{\text{return}} \ge T_{\text{comfort}} + 1.0\text{ K}$）时，有效热容为水泥层自身热容（$C_{\text{eff}} = C_{\text{screed}} \approx 4.8\text{ kWh/K}$）；当地面冷透降至室温（$T_{\text{return}} \le T_{\text{comfort}}$）全屋同频降温时，参与热容平滑扩展至全屋总热容（$C_{\text{eff}} = C_{\text{screed}} + C_{\text{indoor}} \approx 13.3\text{ kWh/K}$，$\alpha \in [0.0, 1.0]$）。
   * **全时段最小二乘连续线性回归：** 基于区段内所有 $N$ 个真实采样点进行一元线性回归求取降温斜率与 $R^2$ 拟合优度，杜绝起止两点噪声造成的斜率畸变（$R^2 \ge 0.70$，降温速率 $\ge 0.04\text{ K/h}$）。
-  * **多夜 $R^2 \times \text{时长}$ 加权回归：** 跨多夜整合有效黑夜降温段，输出高可信度建筑热损失指标（$W/K$），并以本地时区（CET）显示时间窗口。
+  * **多夜 $R^2 \times \text{duration}$ 加权回归：** 跨多夜整合有效黑夜降温段，输出高可信度建筑热损失指标（$\text{W/K}$），并以本地时区（CET）显示时间窗口。
   * **设定温度一致性纯净过滤：** 在回归分析中自动剔除设定温度异常变化（如 $25.5^\circ\text{C}$ 测试数据）的脏数据。
-  * **窗口运行电量与 24 小时全日总能耗双轨计量：** 清晰区分供热窗口内的压缩机主动做功电量与全天包含地暖二级循环水泵（常开约 25W）及主板电控底噪（约 15W）的 50W 宽裕经验基准寄生功耗（~$1.2\text{ kWh/天}$）；并预留独立变量接口支持物理分电表（如 Shelly 3EM）实测校准。
+  * **窗口运行电量与 24 小时全日总能耗双轨计量：** 清晰区分供热窗口内的压缩机主动做功电量与全天包含地暖二级循环水泵（常开约 25W）及主板电控底噪（约 15W）的 50W 宽裕经验基准寄生功耗（约 $1.2\text{ kWh/day}$）；并预留独立变量接口支持物理分电表（如 Shelly 3EM）实测校准。
 
 ---
 
@@ -184,24 +184,24 @@ beautiful-heisenberg/
 * **单元测试状态：** **76 / 76 全部通过**
 
 ### 本地执行测试套件
-在项目根目录下通过 PowerShell 运行：
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-$env:Path = "$env:JAVA_HOME\bin;" + $env:Path
-$gradle = "C:\Users\limuy\.gradle\wrapper\dists\gradle-9.5.0-bin\bvnork1r7n8i6kp5cnkibsc9q\gradle-9.5.0\bin\gradle.bat"
-& $gradle testDebugUnitTest
+在项目根目录下运行 Gradle 单元测试：
+```bash
+./gradlew testDebugUnitTest
 ```
 
 ### 在真机设备上安装运行
-1. 在 Android Studio 中打开项目文件夹：`c:\Users\limuy\Documents\antigravity\beautiful-heisenberg`。
+1. 克隆代码并在 Android Studio 中打开项目：
+   ```bash
+   git clone https://github.com/siml1169/BREAST.git
+   ```
 2. 通过 USB 数据线或无线 ADB 连接你的 Android 手机。
 3. 点击工具栏的 **Run (`app`)** 或直接安装预编译的 `app-release.apk`。
 4. 打开手机上的 App，点击 **Connect Bosch SingleKey ID** 完成首次博世账号登录授权，随后点击 **Sync Lowest-Price Schedule Now** 即可开始体验现货电价自主供暖调度。
 
 ### 编译可分发的签名版 Release APK
 在本地编译正式版签名安装包：
-```powershell
-& $gradle assembleRelease
+```bash
+./gradlew assembleRelease
 ```
 编译生成的安装包保存在 `app/build/outputs/apk/release/app-release.apk`。
 
