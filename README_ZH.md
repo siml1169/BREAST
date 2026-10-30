@@ -12,7 +12,7 @@
 [![网关环境](https://img.shields.io/badge/网关环境-Bosch%20Connect--Key%20K30%20RF-purple.svg)]()
 [![State](https://img.shields.io/badge/系统状态-日常可用%20(Daily%20Driver)-success.svg)]()
 
-**BREAST Heatpump**（全称 **B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**）是一款原生 Android Kotlin 应用程序，专为**博世（Bosch）与布德鲁斯（Buderus）空气源热泵**深度定制，基于欧洲日前电力现货市场浮动价格（**EPEX Spot DE-LU**，以德国 Vattenfall ÖkoStrom Dynamik 动态电价为基准），自主规划与执行最具经济效益的热泵供热日程与负荷调度。
+**BREAST Heatpump**（全称 **B**osch **R**everse **E**ngineered **A**PI **S**mart **T**ool for **Heatpump**）是一款原生 Android Kotlin 应用程序，专为**博世（Bosch）空气源热泵**深度定制，基于欧洲日前电力现货市场浮动价格（**EPEX Spot DE-LU**，以德国 Vattenfall ÖkoStrom Dynamik 动态电价为基准），自主规划与执行最具经济效益的热泵供热日程与负荷调度。
 
 应用通过 **SingleKey ID OAuth2 + PKCE** 直接与博世官方 **PointT 云端 API**（`pointt-api.bosch-thermotechnology.com`）通信，在本地 SQLite 数据库中高频记录系统运行物理遥测，精准渲染符合设备制造标准的**非线性物理供热特性曲线（HPC 410）**，求解先进的**模型预测控制（MPC）建筑热平衡与热惰性模型**，并通过 Android 系统级后台守护进程完全自主运行。
 
