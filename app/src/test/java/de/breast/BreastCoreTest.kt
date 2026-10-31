@@ -2586,6 +2586,11 @@ class BreastCoreTest {
         assertEquals("Schließen", deStrings.close)
         assertEquals("关闭", zhStrings.close)
 
+        // Operational demand modes
+        assertEquals("Idle", enStrings.modeIdle)
+        assertEquals("Standby", deStrings.modeIdle)
+        assertEquals("待机", zhStrings.modeIdle)
+
         // Telemetry descriptions & keys
         assertEquals(" (+0 K Base)", enStrings.telemetryShiftBase)
         assertEquals(" (+0 K Basis)", deStrings.telemetryShiftBase)

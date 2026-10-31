@@ -674,7 +674,7 @@ object BreastI18n {
         telemetryWarmupRampFormat = "  •  Aufheizrampe: ~%.0f min",
         modeDhw = "WW",
         modeHeating = "Heizen",
-        modeIdle = "Bereit",
+        modeIdle = "Standby",
         cascadeActivePlanFormat = "Aktiver Tarif: %s\n(Synthetische Zeitslots direkt aus Fahrplan generiert; externer Börsen-Fallback umgangen)",
         cascadePriorityTitle = "Prioritäts-Kaskade:\n",
         cascadePrimaryRole = "Primär",
