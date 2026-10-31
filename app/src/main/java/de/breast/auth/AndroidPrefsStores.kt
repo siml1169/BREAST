@@ -357,7 +357,11 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
 
     var buildingLossKwPerK: Double
         get() = prefs.getFloat("building_loss_kw_per_k", 0.150f).toDouble()
-        set(value) = prefs.edit().putFloat("building_loss_kw_per_k", value.toFloat()).apply()
+        set(value) {
+            prefs.edit().putFloat("building_loss_kw_per_k", value.toFloat()).apply()
+            learnedBuildingLossKwPerK = value
+            learnedCycleCount = 0
+        }
 
     var maxThermalBufferingK: Double
         get() = prefs.getFloat("max_thermal_buffering_k", 1.2f).toDouble()
@@ -431,7 +435,6 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
         targetHeatingTempC: Double = sliderTempC,
         liveStartingReturnTempC: Double? = null
     ): HolisticOptimizationConfig {
-        val effectiveLossKwPerK = if (learnedCycleCount > 0) learnedBuildingLossKwPerK else buildingLossKwPerK
         return HolisticOptimizationConfig(
             targetHeatingTempC = targetHeatingTempC,
             targetDailyRuntimeHours = targetOperationHours,
@@ -442,13 +445,13 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             useEmpiricalGroundTruthModulation = groundTruthModulationEnabled,
             calibratedModulationAt10C = calibratedModulationAt10C,
             calibratedModulationSlopePerK = calibratedModulationSlopePerK,
-            buildingLossKwPerK = effectiveLossKwPerK,
+            buildingLossKwPerK = buildingLossKwPerK,
             coolingRateKPerHour = learnedCoolingRateKPerHour,
             maxThermalBufferingK = maxThermalBufferingK,
             dailyBudgetEuro = dailyBudgetEuro,
             preference = OptimizationPreference.fromId(optimizationPreference),
             liveStartingReturnTempC = liveStartingReturnTempC,
-            adaptiveCycleCount = learnedCycleCount
+            adaptiveCycleCount = 0
         )
     }
 

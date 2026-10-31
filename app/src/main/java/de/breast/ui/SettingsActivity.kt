@@ -962,6 +962,7 @@ class SettingsActivity : ComponentActivity() {
             }
 
             var lastMeasuredKw: Double? = null
+            var lastMeasuredCoolingRate: Double? = null
 
             val analyzeSetbackBtn = createStyledButton(
                 label = i18n.analyzeSetbackBtn,
@@ -1006,6 +1007,7 @@ class SettingsActivity : ComponentActivity() {
                             )
                             if (uiModel != null) {
                                 lastMeasuredKw = uiModel.chosenLoss / 1000.0
+                                lastMeasuredCoolingRate = result?.coolingRateKPerHour
 
                                 setbackStatusText.text = uiModel.statusText
                                 setbackStatusText.setTextColor(Color.parseColor(palette.accentGreen))
@@ -1096,6 +1098,10 @@ class SettingsActivity : ComponentActivity() {
             applySetbackBtn.setOnClickListener {
                 val kw = lastMeasuredKw ?: return@setOnClickListener
                 settingsStore.buildingLossKwPerK = kw
+                val cr = lastMeasuredCoolingRate
+                if (cr != null && cr > 0.0) {
+                    settingsStore.learnedCoolingRateKPerHour = cr
+                }
                 val w = (kw * 1000.0).roundToInt()
                 lossBadge.text = "$w W/K"
                 lossSeekBar.progress = (((w - 80) / 10.0).toInt()).coerceIn(0, 22)

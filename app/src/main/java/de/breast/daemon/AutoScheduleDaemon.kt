@@ -122,9 +122,6 @@ class AutoScheduleDaemon(
             val calib = observer.performOnlineCalibration(snapshots, settingsStore)
             if (calib != null) {
                 logs.add("[$nowIso] ${calib.logMessage}")
-                if (calib.isUpdated && settingsStore.holisticOptimizationEnabled) {
-                    effectiveHolisticConfig = settingsStore.buildHolisticOptimizationConfig()
-                }
             }
         }
 
