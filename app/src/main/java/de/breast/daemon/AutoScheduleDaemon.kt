@@ -28,6 +28,7 @@ import de.breast.spot.SpotPriceSource
 import de.breast.telemetry.SqliteTelemetryStore
 import de.breast.telemetry.TelemetryStore
 import de.breast.weather.WeatherForecastClient
+import de.breast.ui.BreastI18n
 import de.breast.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -739,6 +740,8 @@ object BreastNotificationHelper {
 
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val settings = UserSettingsStore(context)
+        val n = BreastI18n.notificationsFor(settings.appLanguage)
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         // Clean up legacy channel so Android doesn't retain old IMPORTANCE_LOW settings
@@ -748,27 +751,27 @@ object BreastNotificationHelper {
 
         val authChannel = NotificationChannel(
             CHANNEL_AUTH_ALERTS,
-            "SingleKey ID Login Alerts",
+            n.channelAuthName,
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Alerts when Bosch SingleKey ID token expires or requires re-login"
+            description = n.channelAuthDesc
             enableVibration(true)
         }
 
         val syncChannel = NotificationChannel(
             CHANNEL_SYNC_STATUS,
-            "Daily Heat Pump Schedule Sync",
+            n.channelSyncName,
             NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
-            description = "Notifications when new EPEX Spot schedules are pushed to the heat pump"
+            description = n.channelSyncDesc
         }
 
         val bgChannel = NotificationChannel(
             CHANNEL_BACKGROUND_STATUS,
-            "Background Telemetry & Automation Badge",
+            n.channelBgName,
             NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
-            description = "Ongoing notification badge indicating BREAST telemetry and heat pump automation are actively monitoring in the background"
+            description = n.channelBgDesc
             setShowBadge(true)
             setSound(null, null)
             enableVibration(false)
@@ -781,6 +784,9 @@ object BreastNotificationHelper {
 
     fun notifyCredentialIssue(context: Context, message: String) {
         ensureChannels(context)
+        val settings = UserSettingsStore(context)
+        val n = BreastI18n.notificationsFor(settings.appLanguage)
+        val localizedMessage = BreastI18n.localizeAuthErrorMessage(message, settings.appLanguage)
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
@@ -800,9 +806,9 @@ object BreastNotificationHelper {
 
         val notification = builder
             .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle("Bosch SingleKey ID Login Needed")
-            .setContentText(message)
-            .setStyle(Notification.BigTextStyle().bigText("$message\nTap to open BREAST and sign in so daily heat pump scheduling continues."))
+            .setContentTitle(n.authAlertTitle)
+            .setContentText(localizedMessage)
+            .setStyle(Notification.BigTextStyle().bigText("$localizedMessage\n${n.authAlertTapPrompt}"))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
@@ -822,6 +828,8 @@ object BreastNotificationHelper {
         runtimeHours: Double
     ) {
         ensureChannels(context)
+        val settings = UserSettingsStore(context)
+        val n = BreastI18n.notificationsFor(settings.appLanguage)
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
@@ -839,7 +847,8 @@ object BreastNotificationHelper {
         }
 
         val summary = String.format(
-            "Pushed %.1fh lowest-price window (%.1f°C) for %s",
+            java.util.Locale.US,
+            n.syncStatusSummaryFormat,
             runtimeHours,
             targetTempC,
             syncedDates.joinToString(", ")
@@ -847,7 +856,7 @@ object BreastNotificationHelper {
 
         val notification = builder
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-            .setContentTitle("Heat Pump Schedule Updated")
+            .setContentTitle(n.syncStatusTitle)
             .setContentText(summary)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
@@ -866,6 +875,7 @@ object BreastNotificationHelper {
         }
 
         ensureChannels(context)
+        val n = BreastI18n.notificationsFor(settings.appLanguage)
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -884,31 +894,24 @@ object BreastNotificationHelper {
         }
 
         val telemMinutes = settings.telemetryIntervalMinutes
-        val telemIntervalStr = if (telemMinutes == 1) "1 min" else if (telemMinutes == 60) "1 hour" else "$telemMinutes min"
+        val telemIntervalStr = if (telemMinutes == 1) n.interval1Min else if (telemMinutes == 60) n.interval1Hour else String.format(java.util.Locale.US, n.intervalNMinFormat, telemMinutes)
 
         val title: String
         val contentText: String
         val bigText: String
 
         if (settings.telemetryCollectionEnabled && settings.autoBackgroundEnabled) {
-            title = "BREAST • Telemetry & Automation Active"
-            contentText = "Telemetry every $telemIntervalStr  •  EPEX Spot active"
-            bigText = "BREAST background operations are active.\n" +
-                "• Recording heat pump telemetry every $telemIntervalStr (Dev Mode)\n" +
-                "• EPEX Spot dynamic schedule sync active (daily 12:00–15:00)\n" +
-                "Tap to view heating curve & schedule dashboard."
+            title = n.bgTitleTelemetryAndAuto
+            contentText = String.format(java.util.Locale.US, n.bgContentTelemetryAndAuto, telemIntervalStr)
+            bigText = String.format(java.util.Locale.US, n.bgBigTextTelemetryAndAuto, telemIntervalStr)
         } else if (settings.telemetryCollectionEnabled) {
-            title = "BREAST • Telemetry & Heating Curve Active"
-            contentText = "Recording heat pump telemetry every $telemIntervalStr"
-            bigText = "Telemetry collection active in background.\n" +
-                "• Recording temperatures every $telemIntervalStr to reconstruct heating curve\n" +
-                "Tap to view live points and curve analysis."
+            title = n.bgTitleTelemetryOnly
+            contentText = String.format(java.util.Locale.US, n.bgContentTelemetryOnly, telemIntervalStr)
+            bigText = String.format(java.util.Locale.US, n.bgBigTextTelemetryOnly, telemIntervalStr)
         } else {
-            title = "BREAST • Daily Sync Active"
-            contentText = "EPEX Spot automation active  •  Monitoring spot prices"
-            bigText = "BREAST EPEX Spot automation is active in the background.\n" +
-                "• Daily sync at 12:00 CET & hourly checks 12:00–15:00\n" +
-                "Tap to open dashboard."
+            title = n.bgTitleSyncOnly
+            contentText = n.bgContentSyncOnly
+            bigText = n.bgBigTextSyncOnly
         }
 
         val notification = builder

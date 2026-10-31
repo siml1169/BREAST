@@ -237,6 +237,31 @@ data class AppStrings(
     val weatherOfflineMsg: String
 )
 
+data class NotificationStrings(
+    val channelAuthName: String,
+    val channelAuthDesc: String,
+    val channelSyncName: String,
+    val channelSyncDesc: String,
+    val channelBgName: String,
+    val channelBgDesc: String,
+    val authAlertTitle: String,
+    val authAlertTapPrompt: String,
+    val syncStatusTitle: String,
+    val syncStatusSummaryFormat: String,
+    val bgTitleTelemetryAndAuto: String,
+    val bgContentTelemetryAndAuto: String,
+    val bgBigTextTelemetryAndAuto: String,
+    val bgTitleTelemetryOnly: String,
+    val bgContentTelemetryOnly: String,
+    val bgBigTextTelemetryOnly: String,
+    val bgTitleSyncOnly: String,
+    val bgContentSyncOnly: String,
+    val bgBigTextSyncOnly: String,
+    val interval1Min: String,
+    val interval1Hour: String,
+    val intervalNMinFormat: String
+)
+
 object BreastI18n {
     private val EN = AppStrings(
         appTitle = "BREAST Heatpump",
@@ -1144,6 +1169,133 @@ object BreastI18n {
                 .replace("Efficiency", "能效优先")
                 .replace("Budget Priority", "预算优先")
             AppLanguage.EN -> breakdown
+        }
+    }
+
+    private val NOTIF_EN = NotificationStrings(
+        channelAuthName = "SingleKey ID Login Alerts",
+        channelAuthDesc = "Alerts when Bosch SingleKey ID token expires or requires re-login",
+        channelSyncName = "Daily Heat Pump Schedule Sync",
+        channelSyncDesc = "Notifications when new EPEX Spot schedules are pushed to the heat pump",
+        channelBgName = "Background Telemetry & Automation Badge",
+        channelBgDesc = "Ongoing notification badge indicating BREAST telemetry and heat pump automation are actively monitoring in the background",
+        authAlertTitle = "Bosch SingleKey ID Login Needed",
+        authAlertTapPrompt = "Tap to open BREAST and sign in so daily heat pump scheduling continues.",
+        syncStatusTitle = "Heat Pump Schedule Updated",
+        syncStatusSummaryFormat = "Pushed %.1fh lowest-price window (%.1f°C) for %s",
+        bgTitleTelemetryAndAuto = "BREAST • Telemetry & Automation Active",
+        bgContentTelemetryAndAuto = "Telemetry every %s  •  EPEX Spot active",
+        bgBigTextTelemetryAndAuto = "BREAST background operations are active.\n" +
+            "• Recording heat pump telemetry every %s (Dev Mode)\n" +
+            "• EPEX Spot dynamic schedule sync active (daily 12:00–15:00)\n" +
+            "Tap to view heating curve & schedule dashboard.",
+        bgTitleTelemetryOnly = "BREAST • Telemetry & Heating Curve Active",
+        bgContentTelemetryOnly = "Recording heat pump telemetry every %s",
+        bgBigTextTelemetryOnly = "Telemetry collection active in background.\n" +
+            "• Recording temperatures every %s to reconstruct heating curve\n" +
+            "Tap to view live points and curve analysis.",
+        bgTitleSyncOnly = "BREAST • Daily Sync Active",
+        bgContentSyncOnly = "EPEX Spot automation active  •  Monitoring spot prices",
+        bgBigTextSyncOnly = "BREAST EPEX Spot automation is active in the background.\n" +
+            "• Daily sync at 12:00 CET & hourly checks 12:00–15:00\n" +
+            "Tap to open dashboard.",
+        interval1Min = "1 min",
+        interval1Hour = "1 hour",
+        intervalNMinFormat = "%d min"
+    )
+
+    private val NOTIF_DE = NotificationStrings(
+        channelAuthName = "SingleKey ID Anmeldehinweise",
+        channelAuthDesc = "Benachrichtigungen, wenn das Bosch SingleKey ID Token abläuft oder ein Re-Login nötig ist",
+        channelSyncName = "Täglicher Wärmepumpen-Sync",
+        channelSyncDesc = "Benachrichtigungen bei Übertragung neuer EPEX-Spot-Zeitpläne an die Wärmepumpe",
+        channelBgName = "Hintergrund-Telemetrie & Automatisierungs-Status",
+        channelBgDesc = "Laufende Statusbenachrichtigung, dass BREAST-Telemetrie und Automatisierung aktiv im Hintergrund überwachen",
+        authAlertTitle = "Bosch SingleKey ID Anmeldung erforderlich",
+        authAlertTapPrompt = "Tippen, um BREAST zu öffnen und anzumelden, damit die tägliche Wärmepumpen-Planung fortgesetzt werden kann.",
+        syncStatusTitle = "Wärmepumpen-Zeitplan aktualisiert",
+        syncStatusSummaryFormat = "Günstigstes Zeitfenster von %.1fh (%.1f°C) an %s übertragen",
+        bgTitleTelemetryAndAuto = "BREAST • Telemetrie & Automatisierung aktiv",
+        bgContentTelemetryAndAuto = "Telemetrie alle %s  •  EPEX Spot aktiv",
+        bgBigTextTelemetryAndAuto = "BREAST-Hintergrundbetrieb ist aktiv.\n" +
+            "• Erfassung der Wärmepumpen-Telemetrie alle %s (Entwicklermodus)\n" +
+            "• Dynamischer EPEX-Spot-Zeitplan-Sync aktiv (täglich 12:00–15:00 Uhr)\n" +
+            "Tippen, um Heizkurve & Zeitplan-Übersicht anzuzeigen.",
+        bgTitleTelemetryOnly = "BREAST • Telemetrie & Heizkurve aktiv",
+        bgContentTelemetryOnly = "Erfassung der Wärmepumpen-Telemetrie alle %s",
+        bgBigTextTelemetryOnly = "Telemetrie-Erfassung im Hintergrund aktiv.\n" +
+            "• Temperaturmessung alle %s zur Rekonstruktion der Heizkurve\n" +
+            "Tippen, um Live-Punkte und Kurvenanalyse anzuzeigen.",
+        bgTitleSyncOnly = "BREAST • Täglicher Sync aktiv",
+        bgContentSyncOnly = "EPEX-Spot-Automatisierung aktiv  •  Überwacht Spotpreise",
+        bgBigTextSyncOnly = "BREAST EPEX-Spot-Automatisierung ist im Hintergrund aktiv.\n" +
+            "• Täglicher Sync um 12:00 Uhr MEZ & stündliche Prüfung von 12:00 bis 15:00 Uhr\n" +
+            "Tippen, um das Dashboard zu öffnen.",
+        interval1Min = "1 Min.",
+        interval1Hour = "1 Std.",
+        intervalNMinFormat = "%d Min."
+    )
+
+    private val NOTIF_ZH = NotificationStrings(
+        channelAuthName = "SingleKey ID 登录提醒",
+        channelAuthDesc = "博世 SingleKey ID 凭据过期或需要重新登录时的重要提醒",
+        channelSyncName = "每日热泵调度同步",
+        channelSyncDesc = "向热泵成功下发最新 EPEX Spot 电价运行计划时的通知",
+        channelBgName = "后台遥测与自动化状态常驻通知",
+        channelBgDesc = "指示 BREAST 正在后台持续进行热泵遥测采集与自动调度的常驻状态徽标",
+        authAlertTitle = "需要登录博世 SingleKey ID",
+        authAlertTapPrompt = "点击打开 BREAST 并登录，以便继续执行每日热泵调度。",
+        syncStatusTitle = "热泵运行计划已更新",
+        syncStatusSummaryFormat = "已将最惠时段 %.1f 小时 (%.1f°C) 下发至热泵 (%s)",
+        bgTitleTelemetryAndAuto = "BREAST • 遥测记录与自动调度运行中",
+        bgContentTelemetryAndAuto = "遥测采样每 %s  •  EPEX Spot 自动调度激活",
+        bgBigTextTelemetryAndAuto = "BREAST 后台监控与自动化运行中。\n" +
+            "• 每 %s 记录一次热泵实时遥测数据 (开发者模式)\n" +
+            "• EPEX Spot 动态电价计划自动同步已启用 (每日 12:00–15:00)\n" +
+            "点击查看热泵采暖曲线及调度看板。",
+        bgTitleTelemetryOnly = "BREAST • 遥测与采暖曲线分析运行中",
+        bgContentTelemetryOnly = "正在后台采集热泵运行遥测数据 (每 %s)",
+        bgBigTextTelemetryOnly = "后台热泵遥测数据采集运行中。\n" +
+            "• 每 %s 记录一次温度以重构出水采暖曲线\n" +
+            "点击查看实时采样点与拟合曲线。",
+        bgTitleSyncOnly = "BREAST • 每日动态调度运行中",
+        bgContentSyncOnly = "EPEX Spot 自动调度激活  •  实时监控现货电价",
+        bgBigTextSyncOnly = "BREAST EPEX Spot 自动化服务在后台持续运行。\n" +
+            "• 每天 12:00 CET 执行基准同步，并在 12:00–15:00 每小时轮询\n" +
+            "点击打开主面板查看详情。",
+        interval1Min = "1 分钟",
+        interval1Hour = "1 小时",
+        intervalNMinFormat = "%d 分钟"
+    )
+
+    fun notificationsFor(lang: AppLanguage): NotificationStrings {
+        return when (lang) {
+            AppLanguage.DE -> NOTIF_DE
+            AppLanguage.ZH -> NOTIF_ZH
+            AppLanguage.EN -> NOTIF_EN
+        }
+    }
+
+    fun localizeAuthErrorMessage(msg: String?, lang: AppLanguage): String {
+        if (msg == null) return ""
+        return when (lang) {
+            AppLanguage.DE -> when {
+                msg.contains("No SingleKey ID refresh_token available", ignoreCase = true) ||
+                msg.contains("Not logged in to Bosch SingleKey ID", ignoreCase = true) ->
+                    "Nicht bei Bosch SingleKey ID angemeldet. Bitte anmelden."
+                msg.contains("Token expired or revoked", ignoreCase = true) ->
+                    "Bosch SingleKey ID Token ist abgelaufen oder wurde widerrufen. Bitte erneut anmelden."
+                else -> msg
+            }
+            AppLanguage.ZH -> when {
+                msg.contains("No SingleKey ID refresh_token available", ignoreCase = true) ||
+                msg.contains("Not logged in to Bosch SingleKey ID", ignoreCase = true) ->
+                    "未登录博世 SingleKey ID，请点击登录。"
+                msg.contains("Token expired or revoked", ignoreCase = true) ->
+                    "博世 SingleKey ID 令牌已过期或已撤销，请重新登录。"
+                else -> msg
+            }
+            AppLanguage.EN -> msg
         }
     }
 }

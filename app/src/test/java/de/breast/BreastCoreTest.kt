@@ -2611,6 +2611,66 @@ class BreastCoreTest {
     }
 
     @Test
+    fun `BreastI18n notification localization provides complete localized strings across EN, DE, and ZH`() {
+        for (lang in de.breast.auth.AppLanguage.entries) {
+            val notif = de.breast.ui.BreastI18n.notificationsFor(lang)
+            assertNotNull(notif)
+            assertTrue("channelAuthName must not be blank for $lang", notif.channelAuthName.isNotBlank())
+            assertTrue("channelAuthDesc must not be blank for $lang", notif.channelAuthDesc.isNotBlank())
+            assertTrue("channelSyncName must not be blank for $lang", notif.channelSyncName.isNotBlank())
+            assertTrue("channelSyncDesc must not be blank for $lang", notif.channelSyncDesc.isNotBlank())
+            assertTrue("channelBgName must not be blank for $lang", notif.channelBgName.isNotBlank())
+            assertTrue("channelBgDesc must not be blank for $lang", notif.channelBgDesc.isNotBlank())
+            assertTrue("authAlertTitle must not be blank for $lang", notif.authAlertTitle.isNotBlank())
+            assertTrue("authAlertTapPrompt must not be blank for $lang", notif.authAlertTapPrompt.isNotBlank())
+            assertTrue("syncStatusTitle must not be blank for $lang", notif.syncStatusTitle.isNotBlank())
+            assertTrue("syncStatusSummaryFormat must not be blank for $lang", notif.syncStatusSummaryFormat.isNotBlank())
+            assertTrue("bgTitleTelemetryAndAuto must not be blank for $lang", notif.bgTitleTelemetryAndAuto.isNotBlank())
+            assertTrue("bgContentTelemetryAndAuto must not be blank for $lang", notif.bgContentTelemetryAndAuto.isNotBlank())
+            assertTrue("bgBigTextTelemetryAndAuto must not be blank for $lang", notif.bgBigTextTelemetryAndAuto.isNotBlank())
+            assertTrue("bgTitleTelemetryOnly must not be blank for $lang", notif.bgTitleTelemetryOnly.isNotBlank())
+            assertTrue("bgContentTelemetryOnly must not be blank for $lang", notif.bgContentTelemetryOnly.isNotBlank())
+            assertTrue("bgBigTextTelemetryOnly must not be blank for $lang", notif.bgBigTextTelemetryOnly.isNotBlank())
+            assertTrue("bgTitleSyncOnly must not be blank for $lang", notif.bgTitleSyncOnly.isNotBlank())
+            assertTrue("bgContentSyncOnly must not be blank for $lang", notif.bgContentSyncOnly.isNotBlank())
+            assertTrue("bgBigTextSyncOnly must not be blank for $lang", notif.bgBigTextSyncOnly.isNotBlank())
+            assertTrue("interval1Min must not be blank for $lang", notif.interval1Min.isNotBlank())
+            assertTrue("interval1Hour must not be blank for $lang", notif.interval1Hour.isNotBlank())
+            assertTrue("intervalNMinFormat must not be blank for $lang", notif.intervalNMinFormat.isNotBlank())
+        }
+
+        val enNotif = de.breast.ui.BreastI18n.notificationsFor(de.breast.auth.AppLanguage.EN)
+        val deNotif = de.breast.ui.BreastI18n.notificationsFor(de.breast.auth.AppLanguage.DE)
+        val zhNotif = de.breast.ui.BreastI18n.notificationsFor(de.breast.auth.AppLanguage.ZH)
+
+        assertEquals("SingleKey ID Login Alerts", enNotif.channelAuthName)
+        assertEquals("SingleKey ID Anmeldehinweise", deNotif.channelAuthName)
+        assertEquals("SingleKey ID 登录提醒", zhNotif.channelAuthName)
+
+        assertEquals("Daily Heat Pump Schedule Sync", enNotif.channelSyncName)
+        assertEquals("Täglicher Wärmepumpen-Sync", deNotif.channelSyncName)
+        assertEquals("每日热泵调度同步", zhNotif.channelSyncName)
+
+        assertEquals("Background Telemetry & Automation Badge", enNotif.channelBgName)
+        assertEquals("Hintergrund-Telemetrie & Automatisierungs-Status", deNotif.channelBgName)
+        assertEquals("后台遥测与自动化状态常驻通知", zhNotif.channelBgName)
+
+        assertEquals("Bosch SingleKey ID Login Needed", enNotif.authAlertTitle)
+        assertEquals("Bosch SingleKey ID Anmeldung erforderlich", deNotif.authAlertTitle)
+        assertEquals("需要登录博世 SingleKey ID", zhNotif.authAlertTitle)
+
+        assertEquals("Heat Pump Schedule Updated", enNotif.syncStatusTitle)
+        assertEquals("Wärmepumpen-Zeitplan aktualisiert", deNotif.syncStatusTitle)
+        assertEquals("热泵运行计划已更新", zhNotif.syncStatusTitle)
+
+        // Test auth error message localization
+        val authErr = "No SingleKey ID refresh_token available. Please log in."
+        assertEquals("Nicht bei Bosch SingleKey ID angemeldet. Bitte anmelden.", de.breast.ui.BreastI18n.localizeAuthErrorMessage(authErr, de.breast.auth.AppLanguage.DE))
+        assertEquals("未登录博世 SingleKey ID，请点击登录。", de.breast.ui.BreastI18n.localizeAuthErrorMessage(authErr, de.breast.auth.AppLanguage.ZH))
+        assertEquals(authErr, de.breast.ui.BreastI18n.localizeAuthErrorMessage(authErr, de.breast.auth.AppLanguage.EN))
+    }
+
+    @Test
     fun `BreastI18n helper methods dynamically translate physics audit, plan summaries, and curve summaries`() {
         val samplePlan = "02:00 – 06:00 (4.0 h) • Standard Window\nAvg 24.5 ct/kWh gross • Est. 1.85 € win (2.50 € 24h) (5.2 kWh win • 7.1 kWh 24h @ ~35% mod) • Target 21.0 °C\nTranslated Switch Points:\n  ► 02:00  comfort2 @ 21.0°C (HEATING ON)  •  DHW low @ 42°C\n  ► 06:00  setback @ 17.0°C (SETBACK)  •  DHW off"
 

@@ -241,6 +241,8 @@ class MainActivity : ComponentActivity() {
         spotClient = SpotPriceClient(httpClient, settingsStore.buildTariffConfig())
         if (settingsStore.appLanguage != currentLanguage) {
             currentLanguage = settingsStore.appLanguage
+            BreastNotificationHelper.ensureChannels(this)
+            BreastNotificationHelper.updateBackgroundActiveNotification(this)
             setContentView(buildContentView())
         } else if (::heatPumpNameText.isInitialized) {
             heatPumpNameText.text = settingsStore.heatPumpName

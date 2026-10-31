@@ -461,6 +461,8 @@ class SettingsActivity : ComponentActivity() {
             fun selectLanguage(lang: de.breast.auth.AppLanguage) {
                 if (settingsStore.appLanguage != lang) {
                     settingsStore.appLanguage = lang
+                    BreastNotificationHelper.ensureChannels(this@SettingsActivity)
+                    BreastNotificationHelper.updateBackgroundActiveNotification(this@SettingsActivity)
                     setContentView(buildContentView())
                 }
             }
