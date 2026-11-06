@@ -3131,7 +3131,7 @@ class BreastCoreTest {
     }
 
     @Test
-    fun `HolisticScheduleOptimizer in Comfort Priority preserves full target runtime and never curtails to 1_5 hours under tight budget`() {
+    fun `HolisticScheduleOptimizer provides nuanced progressive adjustment when budget is partially binding`() {
         val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
         val date = LocalDate.of(2026, 11, 7)
         val dayStart = date.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
@@ -3150,12 +3150,12 @@ class BreastCoreTest {
 
         val scheduler = SwitchProgramScheduler(SwitchScheduleConfig(timeRasterMinutes = 15))
 
-        // In Comfort Priority with a very tight budget (0.50 €) that cannot cover 6.0 hours:
-        // Comfort mode MUST NOT collapse to 1.5 hours! It must preserve the target runtime corridor.
-        val comfortConfig = HolisticOptimizationConfig(
+        // Target is 6.0 hours (360 min). Budget is 0.50 Euro.
+        // Instead of dropping straight to 90 min (1.5h), it smoothly scales down to 150 min (2.5h) which meets 0.50 Euro!
+        val config = HolisticOptimizationConfig(
             targetDailyRuntimeHours = 6.0,
             dailyBudgetEuro = 0.50,
-            minContinuousRunMinutes = 90, // 1.5 hours
+            minContinuousRunMinutes = 90,
             estimatedPowerKw = 1.0,
             buildingLossKwPerK = 0.150,
             preference = OptimizationPreference.COMFORT
@@ -3165,19 +3165,18 @@ class BreastCoreTest {
             date = date,
             spotSlots = slots,
             weatherForecast = emptyList(),
-            holisticConfig = comfortConfig
+            holisticConfig = config
         )
 
         assertNotNull(plan)
-        assertTrue(
-            "Comfort mode must preserve at least 6.0 hours (was: ${plan!!.plannedOperationMinutes} min)",
-            plan.plannedOperationMinutes >= 360
-        )
-        assertEquals("Comfort mode must report 0 budget cut minutes", 0, plan.budgetCutMinutes)
+        // Nuanced adjustment! 150 min is chosen because it meets 0.50 Euro without dropping straight to 90 min!
+        assertEquals("Nuanced adjustment chooses 150 min (2.5h) rather than dropping straight to 90 min", 150, plan!!.plannedOperationMinutes)
+        assertEquals(2.5, plan.plannedOperationMinutes / 60.0, 1e-6)
+        assertEquals(210, plan.budgetCutMinutes) // 360 - 150 = 210 min cut
     }
 
     @Test
-    fun `Budget cut ignores target running time and reduces to minimum 1_5 hours floor`() {
+    fun `Budget cut ignores target running time and reduces to minimum 1_5 hours floor when budget is extreme`() {
         val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
         val date = LocalDate.of(2026, 11, 7)
         val dayStart = date.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
@@ -3197,10 +3196,10 @@ class BreastCoreTest {
 
         val scheduler = SwitchProgramScheduler(SwitchScheduleConfig(timeRasterMinutes = 15))
 
-        // User set slider to 6.0 hours, but daily budget is capped very tightly at 0.50 Euro
+        // User set slider to 6.0 hours, but daily budget is capped very tightly at 0.10 Euro (cannot even cover 1.5h)
         val tightBudgetConfig = HolisticOptimizationConfig(
             targetDailyRuntimeHours = 6.0,
-            dailyBudgetEuro = 0.50,
+            dailyBudgetEuro = 0.10,
             minContinuousRunMinutes = 90, // 1.5 hours
             estimatedPowerKw = 1.0,
             buildingLossKwPerK = 0.150
@@ -3215,7 +3214,7 @@ class BreastCoreTest {
 
         assertNotNull(plan)
         // 90 minutes = 1.5 hours!
-        assertEquals("When budget is exceeded, runtime cut reduces to exactly 1.5 hours (90 min)", 90, plan!!.plannedOperationMinutes)
+        assertEquals("When even 1.5h exceeds budget, runtime cut reduces to exactly 1.5 hours floor (90 min)", 90, plan!!.plannedOperationMinutes)
         assertEquals(1.5, plan.plannedOperationMinutes / 60.0, 1e-6)
         assertTrue("Budget cut must be noted", plan.budgetCutMinutes > 0)
     }

@@ -444,11 +444,8 @@ class HolisticScheduleOptimizer(
             return result
         }
 
-        // Stage 1: Evaluate candidate windows strictly within the normal target corridor.
-        // In Comfort Priority, thermal comfort is paramount: we do NOT filter candidate windows
-        // in the normal corridor by daily budget, nor do we force-curtail duration down to minContinuousSlots.
-        val filterBudgetInNormalCorridor = config.preference != OptimizationPreference.COMFORT
-        val candidates = evaluateSlotCountRange(normalMinSlots..normalMaxSlots, filterBudget = filterBudgetInNormalCorridor).toMutableList()
+        // Stage 1: Evaluate candidate windows strictly within the normal target corridor
+        val candidates = evaluateSlotCountRange(normalMinSlots..normalMaxSlots, filterBudget = true).toMutableList()
         var isBudgetForcedCut = false
 
         val chosenWindow = if (candidates.isNotEmpty()) {
@@ -473,71 +470,48 @@ class HolisticScheduleOptimizer(
             }
 
             candidates.minByOrNull { it.score } ?: candidates.first()
-        } else if (config.dailyBudgetEuro != null && config.preference != OptimizationPreference.COMFORT) {
+        } else if (config.dailyBudgetEuro != null) {
             // Stage 2: Budget ceiling breached by every window in target corridor.
-            // Pick the best unconstrained candidate from the normal corridor and apply Marginal Cost Edge Shaving!
+            // Progressive Nuanced Adjustment: Search downwards slot by slot from (normalMinSlots - 1)
+            // down to minContinuousSlots to find the MAXIMUM possible runtime that fits within the budget.
             isBudgetForcedCut = true
-            val unconstrainedCandidates = evaluateSlotCountRange(normalMinSlots..normalMaxSlots, filterBudget = false)
-            val baseCandidate = if (unconstrainedCandidates.isNotEmpty()) {
-                val minBud = unconstrainedCandidates.minOf { it.rawBudget }
-                val maxBud = unconstrainedCandidates.maxOf { it.rawBudget }
-                val rangeBud = max(1e-4, maxBud - minBud)
+            var bestScaledWindow: CandidateWindow? = null
 
-                val minEff = unconstrainedCandidates.minOf { it.rawEfficiency }
-                val maxEff = unconstrainedCandidates.maxOf { it.rawEfficiency }
-                val rangeEff = max(1e-4, maxEff - minEff)
+            for (on in (normalMinSlots - 1) downTo minContinuousSlots) {
+                val candidatesAtDur = evaluateSlotCountRange(on..on, filterBudget = true)
+                if (candidatesAtDur.isNotEmpty()) {
+                    val minBud = candidatesAtDur.minOf { it.rawBudget }
+                    val maxBud = candidatesAtDur.maxOf { it.rawBudget }
+                    val rangeBud = max(1e-4, maxBud - minBud)
 
-                val minComf = unconstrainedCandidates.minOf { it.rawComfort }
-                val maxComf = unconstrainedCandidates.maxOf { it.rawComfort }
-                val rangeComf = max(1e-4, maxComf - minComf)
+                    val minEff = candidatesAtDur.minOf { it.rawEfficiency }
+                    val maxEff = candidatesAtDur.maxOf { it.rawEfficiency }
+                    val rangeEff = max(1e-4, maxEff - minEff)
 
-                val pref = config.preference
-                for (c in unconstrainedCandidates) {
-                    val normBud = (c.rawBudget - minBud) / rangeBud
-                    val normEff = (c.rawEfficiency - minEff) / rangeEff
-                    val normComf = (c.rawComfort - minComf) / rangeComf
-                    c.score = pref.weightBudget * normBud + pref.weightEfficiency * normEff + pref.weightComfort * normComf
+                    val minComf = candidatesAtDur.minOf { it.rawComfort }
+                    val maxComf = candidatesAtDur.maxOf { it.rawComfort }
+                    val rangeComf = max(1e-4, maxComf - minComf)
+
+                    val pref = config.preference
+                    for (c in candidatesAtDur) {
+                        val normBud = (c.rawBudget - minBud) / rangeBud
+                        val normEff = (c.rawEfficiency - minEff) / rangeEff
+                        val normComf = (c.rawComfort - minComf) / rangeComf
+                        c.score = pref.weightBudget * normBud + pref.weightEfficiency * normEff + pref.weightComfort * normComf
+                    }
+                    bestScaledWindow = candidatesAtDur.minByOrNull { it.score } ?: candidatesAtDur.first()
+                    break // Stop at the longest duration that satisfies the budget!
                 }
-                unconstrainedCandidates.minByOrNull { it.score } ?: unconstrainedCandidates.first()
-            } else null
+            }
 
-            var curStart = baseCandidate?.startIdx ?: 0
-            var curEnd = if (baseCandidate != null) baseCandidate.startIdx + baseCandidate.length else minContinuousSlots
-            var curMetrics = computeWindowMetrics(
-                startIdx = curStart,
-                endIdx = curEnd,
-                dailyEnergyNeedKwh = dailyEnergyNeedKwh,
-                prefixHeatCostCoeff = prefixHeatCostCoeff,
-                prefixPumpCost = prefixPumpCost,
-                prefixInvCop = prefixInvCop,
-                prefixFixedEuro = prefixFixedEuro,
-                prefixOutdoorT = prefixOutdoorT,
-                rasterH = rasterH,
-                hourlyTemps = hourlyTemps,
-                slotGrossCt = slotGrossCt,
-                rasterMinutes = rasterMinutes,
-                controlSimulator = controlSimulator
-            )
-
-            // MARGINAL COST EDGE SHAVING:
-            // Compare delivered heat cost c_heat = c_gross / cop at start slot vs end slot
-            // Iteratively trim the slot with higher delivered heat cost until cost <= budget or length == minContinuousSlots
-            while (curMetrics.euroCost > config.dailyBudgetEuro + 1e-6 && (curEnd - curStart) > minContinuousSlots) {
-                val startSlot = scoredSlots[curStart]
-                val endSlot = scoredSlots[curEnd - 1]
-
-                val startHeatCost = startSlot.deliveredHeatCostCtPerKwh
-                val endHeatCost = endSlot.deliveredHeatCostCtPerKwh
-
-                if (startHeatCost >= endHeatCost) {
-                    curStart++ // Shave start edge (delay start)
-                } else {
-                    curEnd-- // Shave end edge (shut off earlier)
-                }
-
-                curMetrics = computeWindowMetrics(
-                    startIdx = curStart,
-                    endIdx = curEnd,
+            bestScaledWindow ?: run {
+                // Fallback: If even after searching down to minContinuousSlots, the cost still exceeds budget,
+                // scan all possible minContinuousSlots windows across the day to find the absolute cheapest one
+                var bestStart = 0
+                var bestCost = Double.MAX_VALUE
+                val initM = computeWindowMetrics(
+                    startIdx = 0,
+                    endIdx = minContinuousSlots,
                     dailyEnergyNeedKwh = dailyEnergyNeedKwh,
                     prefixHeatCostCoeff = prefixHeatCostCoeff,
                     prefixPumpCost = prefixPumpCost,
@@ -550,14 +524,7 @@ class HolisticScheduleOptimizer(
                     rasterMinutes = rasterMinutes,
                     controlSimulator = controlSimulator
                 )
-            }
-
-            // Fallback: If even after edge shaving down to minContinuousSlots, the cost still exceeds budget,
-            // scan all possible minContinuousSlots windows across the day to find the absolute cheapest one
-            if (curMetrics.euroCost > config.dailyBudgetEuro + 1e-6) {
-                var bestStart = 0
-                var bestCost = Double.MAX_VALUE
-                var bestM = curMetrics
+                var bestM = initM
                 for (s in 0..(usableN - minContinuousSlots)) {
                     val m = computeWindowMetrics(
                         startIdx = s,
@@ -580,26 +547,21 @@ class HolisticScheduleOptimizer(
                         bestM = m
                     }
                 }
-                curStart = bestStart
-                curEnd = bestStart + minContinuousSlots
-                curMetrics = bestM
+                val durH = minContinuousSlots * rasterH
+                CandidateWindow(
+                    startIdx = bestStart,
+                    length = minContinuousSlots,
+                    durationHours = durH,
+                    deltaHours = durH - userTargetHours,
+                    euroCost = bestM.euroCost,
+                    electricityKwh = bestM.electricityKwh,
+                    avgPowerKw = bestM.avgPowerKw,
+                    modulationPct = bestM.modulationPct,
+                    rawBudget = bestM.euroCost,
+                    rawEfficiency = 0.0,
+                    rawComfort = 1.0
+                )
             }
-
-            val shavedLen = curEnd - curStart
-            val durH = shavedLen * rasterH
-            CandidateWindow(
-                startIdx = curStart,
-                length = shavedLen,
-                durationHours = durH,
-                deltaHours = durH - userTargetHours,
-                euroCost = curMetrics.euroCost,
-                electricityKwh = curMetrics.electricityKwh,
-                avgPowerKw = curMetrics.avgPowerKw,
-                modulationPct = curMetrics.modulationPct,
-                rawBudget = curMetrics.euroCost,
-                rawEfficiency = 0.0,
-                rawComfort = 1.0
-            )
         } else {
             // Unreachable fallback for safety
             CandidateWindow(
