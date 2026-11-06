@@ -3038,14 +3038,14 @@ class BreastCoreTest {
         )
 
         // Run at 13:00 on Nov 6 (current minute = 780).
-        // Today's schedule was 10:00 - 15:00 (midpoint = 750 / 12:30).
-        // Since 780 >= 750, half of the runtime has been reached!
+        // Today's schedule was 10:00 - 15:00.
+        // Since hour=13 >= 12, Midday Lock is engaged!
         val testNow = ZonedDateTime.of(2026, 11, 6, 13, 0, 0, 0, berlinZone)
 
         val res = daemon.runHourlyCheckCycle(now = testNow, forcePush = true)
 
-        // Today's schedule must NOT be in syncedDates
-        assertFalse("Today (2026-11-06) must not be overwritten when half of run time is reached", res.syncedDates.contains("2026-11-06"))
+        // Today's schedule must NOT be in syncedDates due to midday lock
+        assertFalse("Today (2026-11-06) must not be overwritten when midday lock is active", res.syncedDates.contains("2026-11-06"))
         assertTrue("Tomorrow (2026-11-07) must be synced", res.syncedDates.contains("2026-11-07"))
 
         // State rollover must promote yesterday's tomorrowWindowSummary to todayWindowSummary
@@ -3055,6 +3055,125 @@ class BreastCoreTest {
         assertNotNull(saved.todayWindowSummary)
         assertTrue("Today's window summary must reflect today's running schedule", saved.todayWindowSummary!!.contains("10:00 – 15:00"))
         assertNotNull(saved.tomorrowWindowSummary)
+        assertTrue("Logs must record Midday Lock", res.logs.any { it.contains("Midday Lock active") })
+    }
+
+    @Test
+    fun `AutoScheduleDaemon allows today schedule sync before midday on force push`() = runBlocking {
+        val today = "2026-11-06"
+        val tomorrow = "2026-11-07"
+        val fakeStore = object : ScheduleStateStore {
+            var state = ScheduleSyncState(
+                lastSyncedTodayDate = null,
+                lastSyncedTomorrowDate = null
+            )
+            override suspend fun loadState(): ScheduleSyncState = state
+            override suspend fun saveState(state: ScheduleSyncState) { this.state = state }
+        }
+
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
+        val berlinZone = SpotPriceClient.BERLIN_ZONE
+        val todayStart = LocalDate.parse(today).atStartOfDay(berlinZone).toInstant().epochSecond
+        val tomorrowStart = LocalDate.parse(tomorrow).atStartOfDay(berlinZone).toInstant().epochSecond
+
+        val fakeSpotSlots = mutableListOf<SpotPriceSlot>()
+        for (h in 0 until 24) {
+            fakeSpotSlots.add(
+                SpotPriceSlot(
+                    startEpochSeconds = todayStart + h * 3600L,
+                    endEpochSeconds = todayStart + (h + 1) * 3600L,
+                    spotEurPerMwh = 40.0,
+                    spotNetCtPerKwh = 4.0,
+                    totalGrossCtPerKwh = tariff.computeGrossCtPerKwh(40.0)
+                )
+            )
+            fakeSpotSlots.add(
+                SpotPriceSlot(
+                    startEpochSeconds = tomorrowStart + h * 3600L,
+                    endEpochSeconds = tomorrowStart + (h + 1) * 3600L,
+                    spotEurPerMwh = 35.0,
+                    spotNetCtPerKwh = 3.5,
+                    totalGrossCtPerKwh = tariff.computeGrossCtPerKwh(35.0)
+                )
+            )
+        }
+
+        val okHttpClient = OkHttpClient()
+        val fakeSpotClient = object : SpotPriceClient(okHttpClient, tariff) {
+            override suspend fun fetchDayAheadPrices(
+                startDate: LocalDate,
+                endDate: LocalDate,
+                sources: List<SpotPriceSource>
+            ): List<SpotPriceSlot> = fakeSpotSlots
+        }
+
+        val scheduler = SwitchProgramScheduler(SwitchScheduleConfig(timeRasterMinutes = 15))
+        val daemon = AutoScheduleDaemon(
+            spotClient = fakeSpotClient,
+            pointTClient = PointTApiClient(okHttpClient, SingleKeyAuthManager(okHttpClient, object : TokenStore {
+                override suspend fun loadTokens(): OAuthTokens? = null
+                override suspend fun saveTokens(tokens: OAuthTokens) {}
+                override suspend fun clearTokens() {}
+                override suspend fun savePendingPkceVerifier(verifier: String) {}
+                override suspend fun loadPendingPkceVerifier(): String? = null
+            })),
+            scheduler = scheduler,
+            stateStore = fakeStore,
+            dryRun = true
+        )
+
+        // Run at 10:00 AM (< 12:00) before midday lock
+        val morningNow = ZonedDateTime.of(2026, 11, 6, 10, 0, 0, 0, berlinZone)
+        val res = daemon.runHourlyCheckCycle(now = morningNow, forcePush = true)
+
+        assertTrue("Before midday, today (2026-11-06) should be synced on forcePush", res.syncedDates.contains("2026-11-06"))
+        assertTrue("Tomorrow (2026-11-07) should be synced", res.syncedDates.contains("2026-11-07"))
+    }
+
+    @Test
+    fun `HolisticScheduleOptimizer in Comfort Priority preserves full target runtime and never curtails to 1_5 hours under tight budget`() {
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
+        val date = LocalDate.of(2026, 11, 7)
+        val dayStart = date.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
+
+        val slots = (0 until 24).map { h: Int ->
+            val eurMwh = 150.0
+            val grossCt = tariff.computeGrossCtPerKwh(eurMwh)
+            SpotPriceSlot(
+                startEpochSeconds = dayStart + h * 3600L,
+                endEpochSeconds = dayStart + (h + 1) * 3600L,
+                spotEurPerMwh = eurMwh,
+                spotNetCtPerKwh = eurMwh / 10.0,
+                totalGrossCtPerKwh = grossCt
+            )
+        }
+
+        val scheduler = SwitchProgramScheduler(SwitchScheduleConfig(timeRasterMinutes = 15))
+
+        // In Comfort Priority with a very tight budget (0.50 €) that cannot cover 6.0 hours:
+        // Comfort mode MUST NOT collapse to 1.5 hours! It must preserve the target runtime corridor.
+        val comfortConfig = HolisticOptimizationConfig(
+            targetDailyRuntimeHours = 6.0,
+            dailyBudgetEuro = 0.50,
+            minContinuousRunMinutes = 90, // 1.5 hours
+            estimatedPowerKw = 1.0,
+            buildingLossKwPerK = 0.150,
+            preference = OptimizationPreference.COMFORT
+        )
+
+        val plan = scheduler.buildDailySwitchSchedule(
+            date = date,
+            spotSlots = slots,
+            weatherForecast = emptyList(),
+            holisticConfig = comfortConfig
+        )
+
+        assertNotNull(plan)
+        assertTrue(
+            "Comfort mode must preserve at least 6.0 hours (was: ${plan!!.plannedOperationMinutes} min)",
+            plan.plannedOperationMinutes >= 360
+        )
+        assertEquals("Comfort mode must report 0 budget cut minutes", 0, plan.budgetCutMinutes)
     }
 
     @Test

@@ -246,6 +246,10 @@ class SwitchProgramScheduler(
             return windows
         }
 
+        const val MIDDAY_LOCK_HOUR = 12
+
+        fun isMiddayLocked(hour: Int): Boolean = hour >= MIDDAY_LOCK_HOUR
+
         fun isHalfRunTimeReached(
             windows: List<TimeWindow>,
             currentMinuteOfDay: Int
@@ -792,10 +796,13 @@ class SwitchProgramScheduler(
         if (dryRun) {
             var hcUpdatesByDay = plans.associate { it.dayOfWeekCode to it.heatingSwitchPoints }
             if (todayDayCode != null && currentMinuteOfDay != null) {
+                val isMidday = currentMinuteOfDay >= MIDDAY_LOCK_HOUR * 60
                 val todayPlan = plans.firstOrNull { it.dayOfWeekCode.equals(todayDayCode, ignoreCase = true) }
-                if (todayPlan != null && isHalfRunTimeReached(todayPlan.sharedWindows, currentMinuteOfDay)) {
+                val halfReached = todayPlan != null && isHalfRunTimeReached(todayPlan.sharedWindows, currentMinuteOfDay)
+                if (isMidday || halfReached) {
                     hcUpdatesByDay = hcUpdatesByDay.filterKeys { it != todayDayCode }
-                    logs.add("$prefix Protected today's ($todayDayCode) running schedule: half of run time reached ($currentMinuteOfDay min). Preserving today.")
+                    val reason = if (isMidday) "midday lock active (${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)} >= 12:00)" else "half of run time reached ($currentMinuteOfDay min)"
+                    logs.add("$prefix Protected today's ($todayDayCode) running schedule: $reason. Preserving today.")
                 }
             }
             logs.add(
@@ -895,24 +902,26 @@ class SwitchProgramScheduler(
             )
         }.toMap()
 
-        // HARDWARE RUNTIME PROTECTION:
-        // If today's running schedule has reached half of its run time (or completed),
+        // HARDWARE RUNTIME & MIDDAY LOCK PROTECTION:
+        // Once midday arrives (12:00 CET or currentMinuteOfDay >= 720), or if today's running schedule has reached half its runtime,
         // DO NOT overwrite today's switch points on the heat pump!
         if (todayDayCode != null && currentMinuteOfDay != null) {
+            val isMidday = currentMinuteOfDay >= MIDDAY_LOCK_HOUR * 60
             val existingTodayWindows = parseWindowsFromSwitchPoints(
                 points = existingHcProg?.switchPoints.orEmpty(),
                 dayOfWeekCode = todayDayCode,
                 onSetpoint = hcOnSetpoint
             )
-            if (isHalfRunTimeReached(existingTodayWindows, currentMinuteOfDay)) {
+            val halfReached = isHalfRunTimeReached(existingTodayWindows, currentMinuteOfDay)
+            if (isMidday || halfReached) {
                 if (hcUpdatesByDay.containsKey(todayDayCode)) {
                     hcUpdatesByDay = hcUpdatesByDay.filterKeys { it != todayDayCode }
                     dhwUpdatesByDay = dhwUpdatesByDay.filterKeys { it != todayDayCode }
                     val runningWinStr = existingTodayWindows.firstOrNull()?.formatWindow() ?: "active window"
+                    val reason = if (isMidday) "midday lock active (${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)} >= 12:00)" else "half of run time reached (${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)})"
                     logs.add(
                         "$prefix Protected today's ($todayDayCode) running schedule ($runningWinStr): " +
-                            "half of run time reached (${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)}). " +
-                            "Preserving existing switch points on heat pump."
+                            "$reason. Preserving existing switch points on heat pump."
                     )
                 }
             }

@@ -158,7 +158,11 @@ class AutoScheduleDaemon(
         val todayDayCode = SwitchProgramScheduler.toBoschDayOfWeek(today.dayOfWeek)
         val currentMinuteOfDay = now.hour * 60 + now.minute
 
-        // Check if today already has a running schedule that has reached half of its run time (or finished)
+        // Midday Lock Protection:
+        // Once midday arrives (>= 12:00 CET), today's schedule is locked.
+        // Spot day-ahead prices for tomorrow publish between 12:00 and 15:00 CET;
+        // updating tomorrow's schedule must NEVER modify or recalculate today's running schedule.
+        val isMiddayLocked = SwitchProgramScheduler.isMiddayLocked(now.hour)
         val existingTodayWindowsFromState = if (state.lastSyncedTomorrowDate == todayStr) {
             SwitchProgramScheduler.parseWindowsFromSummary(state.tomorrowWindowSummary)
         } else if (state.lastSyncedTodayDate == todayStr) {
@@ -170,12 +174,16 @@ class AutoScheduleDaemon(
             windows = existingTodayWindowsFromState,
             currentMinuteOfDay = currentMinuteOfDay
         )
-        val effectiveNeedsTodaySync = if (isTodayHalfRunReached) {
-            val winDesc = existingTodayWindowsFromState.firstOrNull()?.formatWindow() ?: "active window"
+        val effectiveNeedsTodaySync = if (isMiddayLocked || isTodayHalfRunReached) {
+            val winDesc = existingTodayWindowsFromState.firstOrNull()?.formatWindow()
+            val winNote = winDesc?.let { " ($it)" } ?: ""
+            val reason = if (isMiddayLocked) {
+                "Midday Lock active (>= 12:00 CET, current hour=${now.hour})"
+            } else {
+                "Half of runtime reached (${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)})"
+            }
             logs.add(
-                "[$nowIso] Today's ($todayStr, $todayDayCode) running schedule ($winDesc) has reached half of its runtime " +
-                    "(${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)}). " +
-                    "Running schedule is locked and will not be modified. Only updating tomorrow's schedule."
+                "[$nowIso] $reason. Today's ($todayStr, $todayDayCode) schedule$winNote is locked and will not be modified. Only updating tomorrow's schedule."
             )
             false
         } else {

@@ -444,8 +444,11 @@ class HolisticScheduleOptimizer(
             return result
         }
 
-        // Stage 1: Evaluate candidate windows strictly within the normal target corridor
-        val candidates = evaluateSlotCountRange(normalMinSlots..normalMaxSlots, filterBudget = true).toMutableList()
+        // Stage 1: Evaluate candidate windows strictly within the normal target corridor.
+        // In Comfort Priority, thermal comfort is paramount: we do NOT filter candidate windows
+        // in the normal corridor by daily budget, nor do we force-curtail duration down to minContinuousSlots.
+        val filterBudgetInNormalCorridor = config.preference != OptimizationPreference.COMFORT
+        val candidates = evaluateSlotCountRange(normalMinSlots..normalMaxSlots, filterBudget = filterBudgetInNormalCorridor).toMutableList()
         var isBudgetForcedCut = false
 
         val chosenWindow = if (candidates.isNotEmpty()) {
@@ -470,7 +473,7 @@ class HolisticScheduleOptimizer(
             }
 
             candidates.minByOrNull { it.score } ?: candidates.first()
-        } else if (config.dailyBudgetEuro != null) {
+        } else if (config.dailyBudgetEuro != null && config.preference != OptimizationPreference.COMFORT) {
             // Stage 2: Budget ceiling breached by every window in target corridor.
             // Pick the best unconstrained candidate from the normal corridor and apply Marginal Cost Edge Shaving!
             isBudgetForcedCut = true
