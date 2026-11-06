@@ -155,7 +155,34 @@ class AutoScheduleDaemon(
         val tomorrowAlreadyApplied = !forcePush && (state.lastSyncedTomorrowDate == tomorrowStr)
         val needsTomorrowSync = forcePush || (tomorrowPricesReady && !tomorrowAlreadyApplied)
 
-        if (!needsTodaySync && !needsTomorrowSync) {
+        val todayDayCode = SwitchProgramScheduler.toBoschDayOfWeek(today.dayOfWeek)
+        val currentMinuteOfDay = now.hour * 60 + now.minute
+
+        // Check if today already has a running schedule that has reached half of its run time (or finished)
+        val existingTodayWindowsFromState = if (state.lastSyncedTomorrowDate == todayStr) {
+            SwitchProgramScheduler.parseWindowsFromSummary(state.tomorrowWindowSummary)
+        } else if (state.lastSyncedTodayDate == todayStr) {
+            SwitchProgramScheduler.parseWindowsFromSummary(state.todayWindowSummary)
+        } else {
+            emptyList()
+        }
+        val isTodayHalfRunReached = SwitchProgramScheduler.isHalfRunTimeReached(
+            windows = existingTodayWindowsFromState,
+            currentMinuteOfDay = currentMinuteOfDay
+        )
+        val effectiveNeedsTodaySync = if (isTodayHalfRunReached) {
+            val winDesc = existingTodayWindowsFromState.firstOrNull()?.formatWindow() ?: "active window"
+            logs.add(
+                "[$nowIso] Today's ($todayStr, $todayDayCode) running schedule ($winDesc) has reached half of its runtime " +
+                    "(${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)}). " +
+                    "Running schedule is locked and will not be modified. Only updating tomorrow's schedule."
+            )
+            false
+        } else {
+            needsTodaySync
+        }
+
+        if (!effectiveNeedsTodaySync && !needsTomorrowSync) {
             val note = state.appliedScheduleNote?.let { " [Noted: $it]" } ?: ""
             logs.add(
                 "[$nowIso] Schedule already applied & noted$note (today=$todayStr, tomorrowSynced=${state.lastSyncedTomorrowDate ?: (if (isDynamic) "pending 12:00" else "ready")})."
@@ -214,7 +241,7 @@ class AutoScheduleDaemon(
         } ?: emptyList()
 
         val plansToSync = mutableListOf<DailySwitchSchedulePlan>()
-        if (todayComplete && needsTodaySync) {
+        if (todayComplete && effectiveNeedsTodaySync) {
             val todayConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
             scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)?.let { plansToSync.add(it) }
         }
@@ -228,7 +255,7 @@ class AutoScheduleDaemon(
             logs.add("[$nowIso] Tomorrow's ($tomorrowStr) Day-Ahead prices not yet published (12:00-15:00 window). Will retry next hour.")
         }
 
-        val shouldPushNow = forcePush || (needsTodaySync && todayComplete) || (needsTomorrowSync && tomorrowComplete)
+        val shouldPushNow = forcePush || (effectiveNeedsTodaySync && todayComplete) || (needsTomorrowSync && tomorrowComplete)
         if (!shouldPushNow || plansToSync.isEmpty()) {
             return HourlyCheckResult(
                 timestampIso = nowIso,
@@ -308,7 +335,9 @@ class AutoScheduleDaemon(
             apiClient = pointTClient,
             gatewayId = gatewayId,
             plans = plansToSync,
-            dryRun = isDryRunEffective
+            dryRun = isDryRunEffective,
+            currentMinuteOfDay = currentMinuteOfDay,
+            todayDayCode = todayDayCode
         )
         logs.addAll(syncResult.logs)
 
@@ -386,19 +415,49 @@ class AutoScheduleDaemon(
             state.appliedScheduleNote
         }
 
+        val effectiveTodaySummary = todayPlan?.let { formatPlanSummary(it) }
+            ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowWindowSummary
+            else state.todayWindowSummary
+
+        val effectiveTodayPhysics = todayPlan?.physicsBreakdown
+            ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowPhysicsBreakdown
+            else state.todayPhysicsBreakdown
+
+        val effectiveTodayDate = if (todayPlan != null && syncSucceeded) {
+            todayStr
+        } else if (state.lastSyncedTomorrowDate == todayStr) {
+            todayStr
+        } else {
+            state.lastSyncedTodayDate
+        }
+
+        val effectiveTomorrowSummary = tomorrowPlan?.let { formatPlanSummary(it) }
+            ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowWindowSummary
+            else null
+
+        val effectiveTomorrowPhysics = tomorrowPlan?.physicsBreakdown
+            ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowPhysicsBreakdown
+            else null
+
+        val effectiveTomorrowDate = if (tomorrowPlan != null && syncSucceeded && (tomorrowPricesReady || forcePush) && tomorrowComplete) {
+            tomorrowStr
+        } else if (state.lastSyncedTomorrowDate == tomorrowStr) {
+            tomorrowStr
+        } else {
+            null
+        }
+
         val newState = ScheduleSyncState(
-            lastSyncedTodayDate = if (syncSucceeded && todayComplete) todayStr else state.lastSyncedTodayDate,
-            lastSyncedTomorrowDate = if (syncSucceeded && (tomorrowPricesReady || forcePush) && tomorrowComplete) tomorrowStr else state.lastSyncedTomorrowDate,
+            lastSyncedTodayDate = effectiveTodayDate,
+            lastSyncedTomorrowDate = effectiveTomorrowDate,
             lastAppliedSliderTempC = if (syncSucceeded) cfg.targetHeatingTempC else state.lastAppliedSliderTempC,
             lastAppliedOperationHours = if (syncSucceeded) cfg.targetOperationHoursPerDay else state.lastAppliedOperationHours,
             lastAppliedBudgetEuro = if (syncSucceeded) cfg.dailyBudgetEuro else state.lastAppliedBudgetEuro,
             lastSyncTimestampIso = nowIso,
-            todayWindowSummary = todayPlan?.let { formatPlanSummary(it) } ?: state.todayWindowSummary,
-            tomorrowWindowSummary = tomorrowPlan?.let { formatPlanSummary(it) }
-                ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowWindowSummary else null,
-            todayPhysicsBreakdown = todayPlan?.physicsBreakdown ?: state.todayPhysicsBreakdown,
-            tomorrowPhysicsBreakdown = tomorrowPlan?.physicsBreakdown
-                ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowPhysicsBreakdown else null,
+            todayWindowSummary = effectiveTodaySummary,
+            tomorrowWindowSummary = effectiveTomorrowSummary,
+            todayPhysicsBreakdown = effectiveTodayPhysics,
+            tomorrowPhysicsBreakdown = effectiveTomorrowPhysics,
             lastRunLog = logs.joinToString("\n"),
             appliedScheduleSignatures = updatedSignatures,
             appliedScheduleNote = appliedNote,

@@ -18,6 +18,7 @@ import de.breast.optimizer.HeatingTemperatureSlider
 import de.breast.optimizer.OperationDurationSlider
 import de.breast.optimizer.SwitchProgramScheduler
 import de.breast.optimizer.SwitchScheduleConfig
+import de.breast.optimizer.TimeWindow
 import de.breast.telemetry.EmpiricalModulationAnalyzer
 import de.breast.telemetry.EmpiricalModulationProfile
 import de.breast.telemetry.HeatPumpTelemetrySnapshot
@@ -41,6 +42,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZonedDateTime
 
 class BreastCoreTest {
@@ -2929,5 +2931,173 @@ class BreastCoreTest {
         assertNull("Empty string returns null", de.breast.auth.KeystoreSecretStore.decrypt(""))
         assertNull("Truncated bytes return null", de.breast.auth.KeystoreSecretStore.decrypt("AAAA"))
         assertNull("Garbage base64 returns null", de.breast.auth.KeystoreSecretStore.decrypt("bm90X2FfZm9ybWF0dGVkX2NpcGhlcnRleHQ="))
+    }
+
+    @Test
+    fun `SwitchProgramScheduler isHalfRunTimeReached accurately detects 50 percent threshold and window bounds`() {
+        val window = TimeWindow(600, 900) // 10:00 to 15:00, 300 minutes, midpoint = 750 (12:30)
+
+        // Before window
+        assertFalse(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 480)) // 08:00
+        assertFalse(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 600)) // 10:00
+
+        // In first half
+        assertFalse(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 660)) // 11:00 (60m elapsed / 300m = 20%)
+        assertFalse(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 749)) // 12:29 (149m elapsed / 300m < 50%)
+
+        // At or past midpoint
+        assertTrue(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 750)) // 12:30 (150m elapsed / 300m = 50%)
+        assertTrue(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 780)) // 13:00 (180m elapsed / 300m = 60%)
+        assertTrue(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 900)) // 15:00 (300m elapsed / 300m = 100%)
+
+        // After window
+        assertTrue(SwitchProgramScheduler.isHalfRunTimeReached(listOf(window), 960)) // 16:00 (window completed)
+    }
+
+    @Test
+    fun `SwitchProgramScheduler parseWindowsFromSummary and parseWindowsFromSwitchPoints extract correct time bounds`() {
+        val summary1 = "10:00 – 15:00  (5.0 h)  •  Balanced\nAvg 24.5 ct/kWh"
+        val parsed1 = SwitchProgramScheduler.parseWindowsFromSummary(summary1)
+        assertEquals(1, parsed1.size)
+        assertEquals(600, parsed1[0].startMinutes)
+        assertEquals(900, parsed1[0].endMinutes)
+
+        val summary2 = "02:30 - 07:15 (4.8 h)"
+        val parsed2 = SwitchProgramScheduler.parseWindowsFromSummary(summary2)
+        assertEquals(1, parsed2.size)
+        assertEquals(150, parsed2[0].startMinutes)
+        assertEquals(435, parsed2[0].endMinutes)
+
+        assertNull(SwitchProgramScheduler.parseWindowsFromSummary("").firstOrNull())
+        assertNull(SwitchProgramScheduler.parseWindowsFromSummary("No schedule").firstOrNull())
+
+        val pts = listOf(
+            SwitchPoint("Fr", "comfort2", 600),
+            SwitchPoint("Fr", "eco", 900)
+        )
+        val parsedPts = SwitchProgramScheduler.parseWindowsFromSwitchPoints(pts, "Fr", "comfort2")
+        assertEquals(1, parsedPts.size)
+        assertEquals(600, parsedPts[0].startMinutes)
+        assertEquals(900, parsedPts[0].endMinutes)
+    }
+
+    @Test
+    fun `AutoScheduleDaemon locks running schedule when half of runtime reached and preserves today on tomorrow sync`() = runBlocking {
+        val client = OkHttpClient()
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
+        val berlinZone = ZoneId.of("Europe/Berlin")
+        val today = LocalDate.of(2026, 11, 6)
+        val tomorrow = LocalDate.of(2026, 11, 7)
+
+        val slots = (0 until 48).map { slotIdx: Int ->
+            val date = if (slotIdx < 24) today else tomorrow
+            val h = slotIdx % 24
+            val startSec = date.atStartOfDay(berlinZone).plusHours(h.toLong()).toInstant().epochSecond
+            val eurMwh = if (h in 10..14) 15.0 else 90.0
+            SpotPriceSlot(
+                startEpochSeconds = startSec,
+                endEpochSeconds = startSec + 3600L,
+                spotEurPerMwh = eurMwh,
+                spotNetCtPerKwh = eurMwh / 10.0,
+                totalGrossCtPerKwh = tariff.computeGrossCtPerKwh(eurMwh)
+            )
+        }
+
+        val scheduler = SwitchProgramScheduler(SwitchScheduleConfig())
+        val fakeStore = object : ScheduleStateStore {
+            var state = ScheduleSyncState(
+                lastSyncedTodayDate = "2026-11-05",
+                lastSyncedTomorrowDate = "2026-11-06",
+                tomorrowWindowSummary = "10:00 – 15:00  (5.0 h)  •  Comfort\nAvg 22.0 ct/kWh",
+                todayWindowSummary = "09:00 – 14:00  (5.0 h)  •  Yesterday"
+            )
+            override suspend fun loadState(): ScheduleSyncState = state
+            override suspend fun saveState(state: ScheduleSyncState) { this.state = state }
+        }
+
+        val fakeSpotClient = object : SpotPriceClient(client) {
+            override suspend fun fetchDayAheadPrices(
+                startDate: LocalDate,
+                endDate: LocalDate,
+                sources: List<SpotPriceSource>
+            ): List<SpotPriceSlot> = slots
+        }
+
+        val daemon = AutoScheduleDaemon(
+            spotClient = fakeSpotClient,
+            pointTClient = PointTApiClient(client, SingleKeyAuthManager(client, object : TokenStore {
+                override suspend fun saveTokens(tokens: OAuthTokens) {}
+                override suspend fun loadTokens(): OAuthTokens? = null
+                override suspend fun clearTokens() {}
+                override suspend fun savePendingPkceVerifier(verifier: String) {}
+                override suspend fun loadPendingPkceVerifier(): String? = null
+            })),
+            scheduler = scheduler,
+            stateStore = fakeStore,
+            dryRun = true
+        )
+
+        // Run at 13:00 on Nov 6 (current minute = 780).
+        // Today's schedule was 10:00 - 15:00 (midpoint = 750 / 12:30).
+        // Since 780 >= 750, half of the runtime has been reached!
+        val testNow = ZonedDateTime.of(2026, 11, 6, 13, 0, 0, 0, berlinZone)
+
+        val res = daemon.runHourlyCheckCycle(now = testNow, forcePush = true)
+
+        // Today's schedule must NOT be in syncedDates
+        assertFalse("Today (2026-11-06) must not be overwritten when half of run time is reached", res.syncedDates.contains("2026-11-06"))
+        assertTrue("Tomorrow (2026-11-07) must be synced", res.syncedDates.contains("2026-11-07"))
+
+        // State rollover must promote yesterday's tomorrowWindowSummary to todayWindowSummary
+        val saved = fakeStore.loadState()
+        assertEquals("2026-11-06", saved.lastSyncedTodayDate)
+        assertEquals("2026-11-07", saved.lastSyncedTomorrowDate)
+        assertNotNull(saved.todayWindowSummary)
+        assertTrue("Today's window summary must reflect today's running schedule", saved.todayWindowSummary!!.contains("10:00 – 15:00"))
+        assertNotNull(saved.tomorrowWindowSummary)
+    }
+
+    @Test
+    fun `Budget cut ignores target running time and reduces to minimum 1_5 hours floor`() {
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
+        val date = LocalDate.of(2026, 11, 7)
+        val dayStart = date.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
+
+        // Expensive spot prices (e.g. 150 EUR/MWh = 15 ct/kWh net -> ~40 ct/kWh gross)
+        val slots = (0 until 24).map { h: Int ->
+            val eurMwh = 150.0
+            val grossCt = tariff.computeGrossCtPerKwh(eurMwh)
+            SpotPriceSlot(
+                startEpochSeconds = dayStart + h * 3600L,
+                endEpochSeconds = dayStart + (h + 1) * 3600L,
+                spotEurPerMwh = eurMwh,
+                spotNetCtPerKwh = eurMwh / 10.0,
+                totalGrossCtPerKwh = grossCt
+            )
+        }
+
+        val scheduler = SwitchProgramScheduler(SwitchScheduleConfig(timeRasterMinutes = 15))
+
+        // User set slider to 6.0 hours, but daily budget is capped very tightly at 0.50 Euro
+        val tightBudgetConfig = HolisticOptimizationConfig(
+            targetDailyRuntimeHours = 6.0,
+            dailyBudgetEuro = 0.50,
+            minContinuousRunMinutes = 90, // 1.5 hours
+            estimatedPowerKw = 1.0,
+            buildingLossKwPerK = 0.150
+        )
+
+        val plan = scheduler.buildDailySwitchSchedule(
+            date = date,
+            spotSlots = slots,
+            weatherForecast = emptyList(),
+            holisticConfig = tightBudgetConfig
+        )
+
+        assertNotNull(plan)
+        // 90 minutes = 1.5 hours!
+        assertEquals("When budget is exceeded, runtime cut reduces to exactly 1.5 hours (90 min)", 90, plan!!.plannedOperationMinutes)
+        assertEquals(1.5, plan.plannedOperationMinutes / 60.0, 1e-6)
+        assertTrue("Budget cut must be noted", plan.budgetCutMinutes > 0)
     }
 }

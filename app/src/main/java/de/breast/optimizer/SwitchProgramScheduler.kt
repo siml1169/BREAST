@@ -85,6 +85,22 @@ data class TimeWindow(
     val estimatedAveragePowerKw: Double = 0.0,
     val estimatedModulationPct: Double = 0.0
 ) {
+    constructor(
+        startMinutes: Int,
+        endMinutes: Int,
+        date: String = "",
+        dayOfWeekCode: String = "",
+        setpoint: String = "comfort"
+    ) : this(
+        date = date,
+        dayOfWeekCode = dayOfWeekCode,
+        startMinutes = startMinutes,
+        endMinutes = endMinutes,
+        setpoint = setpoint,
+        averageGrossCtPerKwh = 0.0,
+        averageSpotNetCtPerKwh = 0.0
+    )
+
     val durationMinutes: Int get() = endMinutes - startMinutes
 
     fun formatWindow(): String {
@@ -180,6 +196,82 @@ class SwitchProgramScheduler(
         }
 
         private val DAY_ORDER = listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su")
+
+        fun parseWindowsFromSummary(summary: String?): List<TimeWindow> {
+            if (summary.isNullOrBlank()) return emptyList()
+            val regex = Regex("""(\d{1,2}):(\d{2})\s*[–\-]\s*(\d{1,2}):(\d{2})""")
+            val match = regex.find(summary) ?: return emptyList()
+            val sh = match.groupValues[1].toIntOrNull() ?: return emptyList()
+            val sm = match.groupValues[2].toIntOrNull() ?: return emptyList()
+            val eh = match.groupValues[3].toIntOrNull() ?: return emptyList()
+            val em = match.groupValues[4].toIntOrNull() ?: return emptyList()
+            val start = sh * 60 + sm
+            val end = eh * 60 + em
+            return if (end > start) listOf(TimeWindow(start, end)) else emptyList()
+        }
+
+        fun parseWindowsFromSwitchPoints(
+            points: List<SwitchPoint>,
+            dayOfWeekCode: String,
+            onSetpoint: String
+        ): List<TimeWindow> {
+            val dayPoints = points
+                .filter { it.dayOfWeek.equals(dayOfWeekCode, ignoreCase = true) }
+                .sortedBy { it.time }
+            if (dayPoints.isEmpty()) return emptyList()
+
+            val windows = mutableListOf<TimeWindow>()
+            var windowStart: Int? = null
+
+            for (pt in dayPoints) {
+                val isOn = pt.setpoint.equals(onSetpoint, ignoreCase = true) ||
+                    pt.setpoint.contains("comfort", ignoreCase = true) ||
+                    pt.setpoint.contains("high", ignoreCase = true)
+                if (isOn) {
+                    if (windowStart == null) {
+                        windowStart = pt.time
+                    }
+                } else {
+                    if (windowStart != null) {
+                        if (pt.time > windowStart) {
+                            windows.add(TimeWindow(windowStart, pt.time))
+                        }
+                        windowStart = null
+                    }
+                }
+            }
+            if (windowStart != null && windowStart < 1440) {
+                windows.add(TimeWindow(windowStart, 1440))
+            }
+            return windows
+        }
+
+        fun isHalfRunTimeReached(
+            windows: List<TimeWindow>,
+            currentMinuteOfDay: Int
+        ): Boolean {
+            if (windows.isEmpty()) return false
+            val totalDuration = windows.sumOf { (it.endMinutes - it.startMinutes).coerceAtLeast(0) }
+            if (totalDuration <= 0) return false
+
+            // Check cumulative elapsed runtime across all scheduled windows
+            val elapsedMinutes = windows.sumOf { w ->
+                (currentMinuteOfDay - w.startMinutes).coerceIn(0, w.endMinutes - w.startMinutes)
+            }
+            if (elapsedMinutes * 2 >= totalDuration) {
+                return true
+            }
+
+            // Also check if any single window is running and past its 50% midpoint, or already finished
+            for (w in windows) {
+                val dur = w.endMinutes - w.startMinutes
+                val halfPoint = w.startMinutes + (dur / 2)
+                if (currentMinuteOfDay >= halfPoint) {
+                    return true
+                }
+            }
+            return false
+        }
     }
 
     private data class RasterSlot(
@@ -690,20 +782,28 @@ class SwitchProgramScheduler(
         hcId: String = "hc1",
         dhwId: String = "dhw1",
         dryRun: Boolean = true,
-        currentMinuteOfDay: Int? = null
+        currentMinuteOfDay: Int? = null,
+        todayDayCode: String? = null
     ): SyncDetailedResult {
         val logs = mutableListOf<String>()
         val prefix = if (dryRun) "[DRY-RUN]" else "[LIVE-SYNC]"
         val sliderTemp = config.targetHeatingTempC
 
         if (dryRun) {
-            val hcUpdatesByDay = plans.associate { it.dayOfWeekCode to it.heatingSwitchPoints }
+            var hcUpdatesByDay = plans.associate { it.dayOfWeekCode to it.heatingSwitchPoints }
+            if (todayDayCode != null && currentMinuteOfDay != null) {
+                val todayPlan = plans.firstOrNull { it.dayOfWeekCode.equals(todayDayCode, ignoreCase = true) }
+                if (todayPlan != null && isHalfRunTimeReached(todayPlan.sharedWindows, currentMinuteOfDay)) {
+                    hcUpdatesByDay = hcUpdatesByDay.filterKeys { it != todayDayCode }
+                    logs.add("$prefix Protected today's ($todayDayCode) running schedule: half of run time reached ($currentMinuteOfDay min). Preserving today.")
+                }
+            }
             logs.add(
                 "$prefix Would set Heating Target Temperature Slider on /heatingCircuits/$hcId: " +
                     "${sliderTemp}°C (range ${config.temperatureSlider.minTempC}..${config.temperatureSlider.maxTempC}°C, step ${config.temperatureSlider.stepSizeC}°C)"
             )
             logs.add("$prefix Would update /heatingCircuits/$hcId/switchPrograms/A and /dhwCircuits/$dhwId/switchPrograms/A for days ${hcUpdatesByDay.keys}:")
-            plans.forEach { plan ->
+            plans.filter { it.dayOfWeekCode in hcUpdatesByDay.keys }.forEach { plan ->
                 plan.heatingSwitchPoints.zip(plan.dhwSwitchPoints).forEach { (hcSp, dhwSp) ->
                     val stateLabel = if (hcSp.setpoint == config.heatingOnSetpoint) "ON (${sliderTemp}°C)" else "OFF"
                     logs.add("   ${hcSp.dayOfWeek} ${hcSp.formatTimeHm()} (t=${hcSp.time}) -> Heating=$stateLabel, WarmWater=${dhwSp.setpoint}")
@@ -772,7 +872,7 @@ class SwitchProgramScheduler(
         )
 
         // 3. Build switchPoints using hardware-detected setpoint names, time raster, and per-day switch point cap
-        val hcUpdatesByDay = plans.mapIndexed { idx, plan ->
+        var hcUpdatesByDay = plans.mapIndexed { idx, plan ->
             plan.dayOfWeekCode to windowsToSwitchPoints(
                 dayOfWeekCode = plan.dayOfWeekCode,
                 windows = plan.sharedWindows,
@@ -783,7 +883,7 @@ class SwitchProgramScheduler(
                 currentMinuteOfDay = if (idx == 0) currentMinuteOfDay else null
             )
         }.toMap()
-        val dhwUpdatesByDay = plans.mapIndexed { idx, plan ->
+        var dhwUpdatesByDay = plans.mapIndexed { idx, plan ->
             plan.dayOfWeekCode to windowsToSwitchPoints(
                 dayOfWeekCode = plan.dayOfWeekCode,
                 windows = plan.sharedWindows,
@@ -794,6 +894,29 @@ class SwitchProgramScheduler(
                 currentMinuteOfDay = if (idx == 0) currentMinuteOfDay else null
             )
         }.toMap()
+
+        // HARDWARE RUNTIME PROTECTION:
+        // If today's running schedule has reached half of its run time (or completed),
+        // DO NOT overwrite today's switch points on the heat pump!
+        if (todayDayCode != null && currentMinuteOfDay != null) {
+            val existingTodayWindows = parseWindowsFromSwitchPoints(
+                points = existingHcProg?.switchPoints.orEmpty(),
+                dayOfWeekCode = todayDayCode,
+                onSetpoint = hcOnSetpoint
+            )
+            if (isHalfRunTimeReached(existingTodayWindows, currentMinuteOfDay)) {
+                if (hcUpdatesByDay.containsKey(todayDayCode)) {
+                    hcUpdatesByDay = hcUpdatesByDay.filterKeys { it != todayDayCode }
+                    dhwUpdatesByDay = dhwUpdatesByDay.filterKeys { it != todayDayCode }
+                    val runningWinStr = existingTodayWindows.firstOrNull()?.formatWindow() ?: "active window"
+                    logs.add(
+                        "$prefix Protected today's ($todayDayCode) running schedule ($runningWinStr): " +
+                            "half of run time reached (${currentMinuteOfDay / 60}:${String.format("%02d", currentMinuteOfDay % 60)}). " +
+                            "Preserving existing switch points on heat pump."
+                    )
+                }
+            }
+        }
 
         val mergedHcPoints = mergeWithExistingWeekSchedule(
             existingSwitchPoints = existingHcProg?.switchPoints.orEmpty(),
@@ -848,7 +971,8 @@ class SwitchProgramScheduler(
         hcId: String = "hc1",
         dhwId: String = "dhw1",
         dryRun: Boolean = true,
-        currentMinuteOfDay: Int? = null
+        currentMinuteOfDay: Int? = null,
+        todayDayCode: String? = null
     ): List<String> {
         return syncSchedulesToHeatPumpDetailed(
             apiClient = apiClient,
@@ -857,7 +981,8 @@ class SwitchProgramScheduler(
             hcId = hcId,
             dhwId = dhwId,
             dryRun = dryRun,
-            currentMinuteOfDay = currentMinuteOfDay
+            currentMinuteOfDay = currentMinuteOfDay,
+            todayDayCode = todayDayCode
         ).logs
     }
 }
