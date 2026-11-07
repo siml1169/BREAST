@@ -40,6 +40,7 @@ data class ResourceNode(
     val id: String,
     val type: String? = null,
     val value: JsonElement? = null,
+    val values: List<String>? = null,
     val unitOfMeasure: String? = null,
     val writeable: Int? = null,
     val recordable: Int? = null,
@@ -494,11 +495,16 @@ class PointTApiClient(
         }
 
         fun parseString(node: ResourceNode?): String? {
+            val nodeValues = node?.values?.filter { it.isNotBlank() }
+            if (!nodeValues.isNullOrEmpty()) {
+                return nodeValues.joinToString(",")
+            }
             val prim = node?.value as? JsonPrimitive
-            if (prim != null) return prim.content
+            if (prim != null && prim.content.isNotBlank()) return prim.content
             val arr = node?.value as? kotlinx.serialization.json.JsonArray
             if (arr != null && arr.isNotEmpty()) {
-                return arr.joinToString(",") { (it as? JsonPrimitive)?.content ?: it.toString() }
+                val nonBlank = arr.mapNotNull { (it as? JsonPrimitive)?.content?.takeIf { s -> s.isNotBlank() } }
+                if (nonBlank.isNotEmpty()) return nonBlank.joinToString(",")
             }
             return null
         }

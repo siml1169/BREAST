@@ -21,15 +21,21 @@ data class HeatPumpTelemetrySnapshot(
         get() = if (supplyTempC != null && returnTempC != null) supplyTempC - returnTempC else null
 
     val isDhwActive: Boolean
-        get() = demand?.contains("dhw", ignoreCase = true) == true ||
-            (((condenserTempC ?: 0.0) > 36.0 || (returnTempC ?: 0.0) > 34.0) &&
-                (modulationPct ?: 0.0) > 10.0 &&
-                ((supplyTempC ?: 0.0) < (returnTempC ?: 0.0) || (returnTempC ?: 0.0) > 34.0))
+        get() = if (demand != null) {
+            demand.contains("dhw", ignoreCase = true)
+        } else {
+            // Legacy / synthetic fallback when demand was not captured by the API:
+            // DHW coil return loop is hotter than space heating flow (supplyTempC < returnTempC)
+            // or high condenser temperature > 42°C during modulation
+            (supplyTempC != null && returnTempC != null && supplyTempC < returnTempC && (modulationPct ?: 0.0) > 10.0) ||
+                ((condenserTempC ?: 0.0) > 42.0 && (modulationPct ?: 0.0) > 10.0)
+        }
 
     val isHeatingActive: Boolean
         get() = !isDhwActive && (
             demand?.contains("ch", ignoreCase = true) == true ||
-                (chStatus?.equals("on", ignoreCase = true) == true && (modulationPct ?: 0.0) > 15.0 && (deltaTempC ?: 0.0) > 0.8)
+                demand?.contains("hc", ignoreCase = true) == true ||
+                (demand == null && chStatus?.equals("on", ignoreCase = true) == true && (modulationPct ?: 0.0) > 10.0 && (deltaTempC ?: 0.0) > 0.5)
         )
 
     val isIdle: Boolean

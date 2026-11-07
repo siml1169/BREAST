@@ -3381,4 +3381,86 @@ class BreastCoreTest {
         assertTrue("Physics audit must document DHW allocation",
             planWith.physicsBreakdown!!.contains("Domestic Hot Water (DHW Model)"))
     }
+
+    @Test
+    fun testBoschPointTActualHeatDemandDeserializationAndResolution() {
+        val jsonParser = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+        val frostJson = """{"id":"/heatSources/actualHeatDemand","type":"arrayData","writeable":0,"allowedValues":["","ch","dhw","frost"],"values":["frost"]}"""
+        val chJson = """{"id":"/heatSources/actualHeatDemand","type":"arrayData","writeable":0,"allowedValues":["","ch","dhw","frost"],"values":["ch"]}"""
+        val dhwJson = """{"id":"/heatSources/actualHeatDemand","type":"arrayData","writeable":0,"allowedValues":["","ch","dhw","frost"],"values":["dhw"]}"""
+        val emptyJson = """{"id":"/heatSources/actualHeatDemand","type":"arrayData","writeable":0,"allowedValues":["","ch","dhw","frost"],"values":[""]}"""
+
+        val frostNode = jsonParser.decodeFromString<de.breast.api.ResourceNode>(frostJson)
+        val chNode = jsonParser.decodeFromString<de.breast.api.ResourceNode>(chJson)
+        val dhwNode = jsonParser.decodeFromString<de.breast.api.ResourceNode>(dhwJson)
+        val emptyNode = jsonParser.decodeFromString<de.breast.api.ResourceNode>(emptyJson)
+
+        assertEquals(listOf("frost"), frostNode.values)
+        assertEquals(listOf("ch"), chNode.values)
+        assertEquals(listOf("dhw"), dhwNode.values)
+        assertEquals(listOf(""), emptyNode.values)
+
+        fun parseString(node: de.breast.api.ResourceNode?): String? {
+            val nodeValues = node?.values?.filter { it.isNotBlank() }
+            if (!nodeValues.isNullOrEmpty()) {
+                return nodeValues.joinToString(",")
+            }
+            val prim = node?.value as? kotlinx.serialization.json.JsonPrimitive
+            if (prim != null && prim.content.isNotBlank()) return prim.content
+            return null
+        }
+
+        assertEquals("frost", parseString(frostNode))
+        assertEquals("ch", parseString(chNode))
+        assertEquals("dhw", parseString(dhwNode))
+        assertNull(parseString(emptyNode))
+
+        // In deep freezing winter weather, supply = 38°C and return = 33°C during space heating (CH).
+        // Authoritative API mode must cleanly classify as heating without temperature confusion:
+        val winterChSnap = HeatPumpTelemetrySnapshot(
+            timestampIso = "2026-01-15T03:00:00Z",
+            epochSeconds = 1768446000L,
+            outdoorTempC = -8.0,
+            supplyTempC = 38.5,
+            returnTempC = 33.2,
+            condenserTempC = 39.0,
+            modulationPct = 85.0,
+            demand = parseString(chNode),
+            chStatus = "on"
+        )
+        assertFalse("Winter space heating must NOT be flagged as DHW despite high supply/return temps", winterChSnap.isDhwActive)
+        assertTrue("Winter space heating must be flagged as isHeatingActive", winterChSnap.isHeatingActive)
+
+        // DHW charging cycle:
+        val dhwSnap = HeatPumpTelemetrySnapshot(
+            timestampIso = "2026-01-15T14:00:00Z",
+            epochSeconds = 1768485600L,
+            outdoorTempC = 5.0,
+            supplyTempC = 22.0,
+            returnTempC = 48.0,
+            condenserTempC = 52.0,
+            modulationPct = 50.0,
+            demand = parseString(dhwNode),
+            chStatus = "on"
+        )
+        assertTrue("DHW cycle must be authoritative isDhwActive from API", dhwSnap.isDhwActive)
+        assertFalse("DHW cycle must not be flagged as isHeatingActive", dhwSnap.isHeatingActive)
+
+        // Frost protection / Standby cycle:
+        val frostSnap = HeatPumpTelemetrySnapshot(
+            timestampIso = "2026-01-15T18:00:00Z",
+            epochSeconds = 1768500000L,
+            outdoorTempC = 4.0,
+            supplyTempC = 22.5,
+            returnTempC = 22.7,
+            condenserTempC = 23.0,
+            modulationPct = 0.0,
+            demand = parseString(frostNode),
+            chStatus = "on"
+        )
+        assertFalse("Frost protection is not DHW", frostSnap.isDhwActive)
+        assertFalse("Frost protection idle is not space heating active", frostSnap.isHeatingActive)
+        assertTrue("Frost protection snapshot is idle", frostSnap.isIdle)
+    }
 }

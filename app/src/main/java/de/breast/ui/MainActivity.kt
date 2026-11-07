@@ -232,6 +232,10 @@ class MainActivity : ComponentActivity() {
         handleIncomingOAuthIntent(intent)
         if (intent?.action == ACTION_TRIGGER_SYNC) {
             runManualScheduleSync(forcePush = true)
+        } else if (intent?.getStringExtra("action") == "probe" || intent?.action == "de.breast.ACTION_PROBE") {
+            lifecycleScope.launch { runDiagnosticProbe() }
+        } else if (intent?.getStringExtra("action") == "refresh_telemetry") {
+            fetchAndStoreLiveTelemetry()
         }
         refreshUiStatus()
     }
@@ -292,6 +296,10 @@ class MainActivity : ComponentActivity() {
         handleIncomingOAuthIntent(intent)
         if (intent?.action == ACTION_TRIGGER_SYNC) {
             runManualScheduleSync(forcePush = true)
+        } else if (intent?.getStringExtra("action") == "probe" || intent?.action == "de.breast.ACTION_PROBE") {
+            lifecycleScope.launch { runDiagnosticProbe() }
+        } else if (intent?.getStringExtra("action") == "refresh_telemetry") {
+            fetchAndStoreLiveTelemetry()
         }
     }
 
@@ -2010,6 +2018,47 @@ class MainActivity : ComponentActivity() {
             syncNowBtn.isEnabled = true
             resetOverwriteConfirmation()
         }
+    }
+
+    private suspend fun runDiagnosticProbe() {
+        val tokens = tokenStore.loadTokens()
+        if (tokens == null) {
+            android.util.Log.e("BREAST_PROBE", "No tokens available")
+            return
+        }
+        val gw = pointTClient.getGateways().firstOrNull() ?: run {
+            android.util.Log.e("BREAST_PROBE", "No gateways found")
+            return
+        }
+        val gwId = gw.deviceId
+        android.util.Log.i("BREAST_PROBE", "=== STARTING BOSCH GATEWAY PROBE gw=$gwId ===")
+        val rootContainers = listOf(
+            "/heatSources",
+            "/heatSources/hs1",
+            "/dhwCircuits",
+            "/dhwCircuits/dhw1",
+            "/heatingCircuits",
+            "/heatingCircuits/hc1",
+            "/system",
+            "/system/appliance",
+            "/system/sensors"
+        )
+        for (root in rootContainers) {
+            runCatching {
+                val node = pointTClient.getResource(gwId, root)
+                val refs = node?.references.orEmpty()
+                android.util.Log.i("BREAST_PROBE", "CONTAINER: $root -> refs: ${refs.map { it.id }} | val=${node?.value}")
+                for (ref in refs) {
+                    val child = pointTClient.getResource(gwId, ref.id)
+                    android.util.Log.i("BREAST_PROBE", "   REF: ${ref.id} -> val=${child?.value} | allowed=${child?.allowedValues} | type=${child?.type}")
+                }
+            }.onFailure { err ->
+                android.util.Log.e("BREAST_PROBE", "Error probing $root: ${err.message}")
+            }
+        }
+        val rawDemand = pointTClient.getRawResourceJson(gwId, "/heatSources/actualHeatDemand")
+        android.util.Log.i("BREAST_PROBE", "RAW actualHeatDemand JSON: $rawDemand")
+        android.util.Log.i("BREAST_PROBE", "=== FINISHED BOSCH GATEWAY PROBE ===")
     }
 
     private fun readCurrentHeatPumpSchedule(targetView: TextView? = null) {

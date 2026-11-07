@@ -138,9 +138,7 @@ class EmpiricalModulationAnalyzer(
                 s.modulationPct != null &&
                 s.modulationPct > 5.0 &&
                 !s.isDhwActive &&
-                (s.condenserTempC == null || s.condenserTempC <= 36.0) &&
-                (s.returnTempC <= 32.0) &&
-                (s.isHeatingActive || s.chStatus?.equals("on", ignoreCase = true) == true)
+                s.isHeatingActive
         }.sortedBy { it.epochSeconds }
 
         if (allHeating.size < minHeatingSamples) {
