@@ -1736,12 +1736,14 @@ class MainActivity : ComponentActivity() {
         telemetryReturnBadge.text = snap.returnTempC?.let { String.format(i18n.badgeReturn, String.format(java.util.Locale.US, "%.1f°C", it)) } ?: String.format(i18n.badgeReturn, "--")
         telemetryDeltaBadge.text = snap.deltaTempC?.let { String.format(i18n.badgeDelta, String.format(java.util.Locale.US, "%.1fK", it)) } ?: String.format(i18n.badgeDelta, "--")
         telemetryModulationBadge.text = snap.modulationPct?.let { String.format(i18n.badgeMod, String.format(java.util.Locale.US, "%.0f%%", it)) } ?: String.format(i18n.badgeMod, "0%")
-        val modeStr = when {
-            snap.isDhwActive -> i18n.modeDhw
-            snap.isHeatingActive -> i18n.modeHeating
-            else -> i18n.modeIdle
+        val (modeStr, modeColor) = when {
+            snap.isDefrostActive -> Pair(i18n.modeDefrost, palette.accentBlue)
+            snap.isDhwActive -> Pair(i18n.modeDhw, palette.accentAmber)
+            snap.isHeatingActive -> Pair(i18n.modeHeating, palette.accentGreen)
+            else -> Pair(i18n.modeIdle, palette.textSecondary)
         }
         telemetryDemandBadge.text = String.format(i18n.badgeDemand, modeStr)
+        telemetryDemandBadge.setTextColor(Color.parseColor(modeColor))
         if (::heatingCurveChartView.isInitialized) {
             heatingCurveChartView.currentOutdoorTempC = snap.outdoorTempC
             heatingCurveChartView.currentSupplyTempC = snap.supplyTempC

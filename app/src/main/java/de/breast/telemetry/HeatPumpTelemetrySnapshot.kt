@@ -31,15 +31,19 @@ data class HeatPumpTelemetrySnapshot(
                 ((condenserTempC ?: 0.0) > 42.0 && (modulationPct ?: 0.0) > 10.0)
         }
 
+    val isDefrostActive: Boolean
+        get() = demand?.contains("frost", ignoreCase = true) == true ||
+            demand?.contains("defrost", ignoreCase = true) == true
+
     val isHeatingActive: Boolean
-        get() = !isDhwActive && (
+        get() = !isDhwActive && !isDefrostActive && (
             demand?.contains("ch", ignoreCase = true) == true ||
                 demand?.contains("hc", ignoreCase = true) == true ||
                 (demand == null && chStatus?.equals("on", ignoreCase = true) == true && (modulationPct ?: 0.0) > 10.0 && (deltaTempC ?: 0.0) > 0.5)
         )
 
     val isIdle: Boolean
-        get() = !isHeatingActive && !isDhwActive && ((modulationPct ?: 0.0) <= 5.0)
+        get() = !isHeatingActive && !isDhwActive && !isDefrostActive && ((modulationPct ?: 0.0) <= 5.0)
 
     fun toCsvRow(): String {
         return listOf(

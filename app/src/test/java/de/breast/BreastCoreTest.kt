@@ -2591,6 +2591,9 @@ class BreastCoreTest {
         assertEquals("关闭", zhStrings.close)
 
         // Operational demand modes
+        assertEquals("Defrost", enStrings.modeDefrost)
+        assertEquals("Abtauen", deStrings.modeDefrost)
+        assertEquals("除霜", zhStrings.modeDefrost)
         assertEquals("Idle", enStrings.modeIdle)
         assertEquals("Standby", deStrings.modeIdle)
         assertEquals("待机", zhStrings.modeIdle)
@@ -3447,7 +3450,7 @@ class BreastCoreTest {
         assertTrue("DHW cycle must be authoritative isDhwActive from API", dhwSnap.isDhwActive)
         assertFalse("DHW cycle must not be flagged as isHeatingActive", dhwSnap.isHeatingActive)
 
-        // Frost protection / Standby cycle:
+        // Defrost / Frost protection cycle:
         val frostSnap = HeatPumpTelemetrySnapshot(
             timestampIso = "2026-01-15T18:00:00Z",
             epochSeconds = 1768500000L,
@@ -3459,8 +3462,9 @@ class BreastCoreTest {
             demand = parseString(frostNode),
             chStatus = "on"
         )
-        assertFalse("Frost protection is not DHW", frostSnap.isDhwActive)
-        assertFalse("Frost protection idle is not space heating active", frostSnap.isHeatingActive)
-        assertTrue("Frost protection snapshot is idle", frostSnap.isIdle)
+        assertFalse("Defrost is not DHW", frostSnap.isDhwActive)
+        assertTrue("Defrost must be flagged as isDefrostActive", frostSnap.isDefrostActive)
+        assertFalse("Defrost is not space heating active", frostSnap.isHeatingActive)
+        assertFalse("Defrost cycle is not idle", frostSnap.isIdle)
     }
 }
