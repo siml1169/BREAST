@@ -124,6 +124,7 @@ class AutoScheduleDaemon(
             if (calib != null) {
                 logs.add("[$nowIso] ${calib.logMessage}")
             }
+            effectiveHolisticConfig = settingsStore.buildHolisticOptimizationConfig()
         }
 
         val state = stateStore.loadState()
@@ -254,7 +255,8 @@ class AutoScheduleDaemon(
             scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)?.let { plansToSync.add(it) }
         }
         if (tomorrowComplete && (tomorrowPricesReady || forcePush || needsTomorrowSync)) {
-            scheduler.buildDailySwitchSchedule(tomorrow, spotSlots, weatherForecast, effectiveHolisticConfig)?.let {
+            val tomorrowConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
+            scheduler.buildDailySwitchSchedule(tomorrow, spotSlots, weatherForecast, tomorrowConfig)?.let {
                 plansToSync.add(it)
                 val priceNote = if (isDynamic) "Tomorrow's ($tomorrowStr) Day-Ahead prices published!" else "Tomorrow's ($tomorrowStr) ${spotClient.tariffConfig.pricingModel.displayName} schedule compiled!"
                 logs.add("[$nowIso] $priceNote Computed holistic schedule window.")

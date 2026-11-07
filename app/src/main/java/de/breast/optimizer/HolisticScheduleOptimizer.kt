@@ -287,9 +287,31 @@ class HolisticScheduleOptimizer(
                 parasiticBaselinePowerKw = config.customMeasuredParasiticLoadKw ?: config.parasiticBaselinePowerKw,
                 baselineInternalGainsKw = config.baselineInternalGainsKw,
                 dhwDailyElectricityKwh = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0,
-                dhwCyclePowerKw = config.dhwAveragePowerKw
+                dhwCyclePowerKw = config.dhwAveragePowerKw,
+                minElecPowerKw = config.minElecPowerKw,
+                maxElecPowerKw = config.maxElecPowerKw,
+                estimatedElectricalPowerKw = config.estimatedPowerKw
             )
         } else null
+
+        val projectedMidnightReturn: Double? = if (config.liveStartingReturnTempC != null) {
+            val nowZone = java.time.ZonedDateTime.now(BERLIN_ZONE)
+            val todayDate = nowZone.toLocalDate()
+            if (date == todayDate) {
+                config.liveStartingReturnTempC
+            } else if (date == todayDate.plusDays(1)) {
+                // Project from current live return temp to midnight
+                val currentHour = nowZone.hour + nowZone.minute / 60.0
+                val remainingHours = max(0.0, 24.0 - currentHour)
+                val decayK = remainingHours * config.coolingRateKPerHour * 0.35
+                val setbackFloor = controlSimulator?.estimateTargetReturnTempC(hourlyTemps.firstOrNull() ?: 8.0, 17.0) ?: 21.0
+                max(setbackFloor, config.liveStartingReturnTempC - decayK)
+            } else {
+                null
+            }
+        } else {
+            null
+        }
 
         val targetComfortReturn = controlSimulator?.estimateTargetReturnTempC(
             outdoorTempC = hourlyTemps.firstOrNull() ?: 8.0,
@@ -301,7 +323,7 @@ class HolisticScheduleOptimizer(
             hourlyOutdoorTempsC = hourlyTemps.toList(),
             scheduledComfortHours = config.targetDailyRuntimeHours,
             coolingRateKPerHour = config.coolingRateKPerHour,
-            liveStartingReturnTempC = config.liveStartingReturnTempC,
+            liveStartingReturnTempC = projectedMidnightReturn ?: config.liveStartingReturnTempC,
             targetComfortReturnTempC = targetComfortReturn
         )
         val physicalNominalHours = energyModel.calculateNominalRequiredHours(dailyEnergyNeedKwh)
@@ -385,7 +407,8 @@ class HolisticScheduleOptimizer(
                         hourlyTemps = hourlyTemps,
                         slotGrossCt = slotGrossCt,
                         rasterMinutes = rasterMinutes,
-                        controlSimulator = controlSimulator
+                        controlSimulator = controlSimulator,
+                        initialReturnTempC = projectedMidnightReturn
                     )
 
                     if (filterBudget && config.dailyBudgetEuro != null && metrics.euroCost > config.dailyBudgetEuro + 1e-6) {
@@ -527,7 +550,8 @@ class HolisticScheduleOptimizer(
                     hourlyTemps = hourlyTemps,
                     slotGrossCt = slotGrossCt,
                     rasterMinutes = rasterMinutes,
-                    controlSimulator = controlSimulator
+                    controlSimulator = controlSimulator,
+                    initialReturnTempC = projectedMidnightReturn
                 )
                 var bestM = initM
                 for (s in 0..(usableN - minContinuousSlots)) {
@@ -544,7 +568,8 @@ class HolisticScheduleOptimizer(
                         hourlyTemps = hourlyTemps,
                         slotGrossCt = slotGrossCt,
                         rasterMinutes = rasterMinutes,
-                        controlSimulator = controlSimulator
+                        controlSimulator = controlSimulator,
+                        initialReturnTempC = projectedMidnightReturn
                     )
                     if (m.euroCost < bestCost - 1e-9) {
                         bestCost = m.euroCost
@@ -604,7 +629,8 @@ class HolisticScheduleOptimizer(
                     hourlyTemps = hourlyTemps,
                     slotGrossCt = slotGrossCt,
                     rasterMinutes = rasterMinutes,
-                    controlSimulator = controlSimulator
+                    controlSimulator = controlSimulator,
+                    initialReturnTempC = projectedMidnightReturn
                 )
                 if (config.dailyBudgetEuro != null && nextMetrics.euroCost > config.dailyBudgetEuro + 1e-6) break
                 endIdx++
@@ -623,7 +649,8 @@ class HolisticScheduleOptimizer(
                     hourlyTemps = hourlyTemps,
                     slotGrossCt = slotGrossCt,
                     rasterMinutes = rasterMinutes,
-                    controlSimulator = controlSimulator
+                    controlSimulator = controlSimulator,
+                    initialReturnTempC = projectedMidnightReturn
                 )
                 if (config.dailyBudgetEuro != null && nextMetrics.euroCost > config.dailyBudgetEuro + 1e-6) break
                 startIdx--
@@ -643,7 +670,8 @@ class HolisticScheduleOptimizer(
             hourlyTemps = hourlyTemps,
             slotGrossCt = slotGrossCt,
             rasterMinutes = rasterMinutes,
-            controlSimulator = controlSimulator
+            controlSimulator = controlSimulator,
+            initialReturnTempC = projectedMidnightReturn
         )
 
         val chosenLen = endIdx - startIdx
@@ -802,7 +830,8 @@ class HolisticScheduleOptimizer(
         hourlyTemps: DoubleArray,
         slotGrossCt: DoubleArray,
         rasterMinutes: Int,
-        controlSimulator: ControlUnitSimulator?
+        controlSimulator: ControlUnitSimulator?,
+        initialReturnTempC: Double? = null
     ): WindowEvalResult {
         val on = endIdx - startIdx
         val durH = on * rasterH
@@ -818,6 +847,7 @@ class HolisticScheduleOptimizer(
                     hourlyTemps = hourlyTemps,
                     slotGrossCtPerKwh = slotGrossCt,
                     rasterMinutes = rasterMinutes,
+                    initialReturnTempC = initialReturnTempC,
                     targetDailyThermalEnergyNeedKwh = dailyEnergyNeedKwh
                 )
                 WindowEvalResult(

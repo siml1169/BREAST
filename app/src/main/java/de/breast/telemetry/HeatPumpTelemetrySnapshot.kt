@@ -32,8 +32,10 @@ data class HeatPumpTelemetrySnapshot(
         }
 
     val isDefrostActive: Boolean
-        get() = demand?.contains("frost", ignoreCase = true) == true ||
-            demand?.contains("defrost", ignoreCase = true) == true
+        get() = ((modulationPct ?: 0.0) > 5.0) && (
+            demand?.contains("frost", ignoreCase = true) == true ||
+                demand?.contains("defrost", ignoreCase = true) == true
+        )
 
     val isHeatingActive: Boolean
         get() = !isDhwActive && !isDefrostActive && (

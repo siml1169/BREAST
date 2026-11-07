@@ -3450,8 +3450,8 @@ class BreastCoreTest {
         assertTrue("DHW cycle must be authoritative isDhwActive from API", dhwSnap.isDhwActive)
         assertFalse("DHW cycle must not be flagged as isHeatingActive", dhwSnap.isHeatingActive)
 
-        // Defrost / Frost protection cycle:
-        val frostSnap = HeatPumpTelemetrySnapshot(
+        // Idle Frost Protection monitoring cycle (modulation = 0%):
+        val idleFrostSnap = HeatPumpTelemetrySnapshot(
             timestampIso = "2026-01-15T18:00:00Z",
             epochSeconds = 1768500000L,
             outdoorTempC = 4.0,
@@ -3462,9 +3462,89 @@ class BreastCoreTest {
             demand = parseString(frostNode),
             chStatus = "on"
         )
-        assertFalse("Defrost is not DHW", frostSnap.isDhwActive)
-        assertTrue("Defrost must be flagged as isDefrostActive", frostSnap.isDefrostActive)
-        assertFalse("Defrost is not space heating active", frostSnap.isHeatingActive)
-        assertFalse("Defrost cycle is not idle", frostSnap.isIdle)
+        assertFalse("Frost protection is not DHW", idleFrostSnap.isDhwActive)
+        assertFalse("Frost protection with 0% modulation is not active defrosting", idleFrostSnap.isDefrostActive)
+        assertFalse("Frost protection idle is not space heating active", idleFrostSnap.isHeatingActive)
+        assertTrue("Frost protection with 0% modulation is idle (Standby)", idleFrostSnap.isIdle)
+
+        // Active Defrost cycle (compressor active with modulation > 5%):
+        val activeDefrostSnap = HeatPumpTelemetrySnapshot(
+            timestampIso = "2026-01-15T18:15:00Z",
+            epochSeconds = 1768500900L,
+            outdoorTempC = 2.0,
+            supplyTempC = 22.0,
+            returnTempC = 23.0,
+            condenserTempC = 24.0,
+            modulationPct = 65.0,
+            demand = parseString(frostNode),
+            chStatus = "on"
+        )
+        assertFalse("Active defrost is not DHW", activeDefrostSnap.isDhwActive)
+        assertTrue("Active defrost with modulation > 5% must be flagged as isDefrostActive", activeDefrostSnap.isDefrostActive)
+        assertFalse("Active defrost is not space heating active", activeDefrostSnap.isHeatingActive)
+        assertFalse("Active defrost cycle is not idle", activeDefrostSnap.isIdle)
+    }
+
+    @Test
+    fun `Tomorrow Nov 8 real-world schedule test - Efficiency Priority schedules midday window due to superior Carnot COP and heat cost`() {
+        val date = LocalDate.of(2026, 11, 8)
+        val dayStart = date.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 21.01)
+
+        // Tomorrow's typical spot prices: night ~22 ct/kWh net, midday ~21.8 ct/kWh net
+        val slots = (0 until 24).map { h ->
+            val net = if (h in 11..16) 21.8 else 22.12
+            val gross = tariff.computeGrossCtPerKwh(net * 10.0)
+            SpotPriceSlot(
+                startEpochSeconds = dayStart + h * 3600L,
+                endEpochSeconds = dayStart + (h + 1) * 3600L,
+                spotEurPerMwh = net * 10.0,
+                spotNetCtPerKwh = net,
+                totalGrossCtPerKwh = gross
+            )
+        }
+
+        // Tomorrow's weather: night 1.8°C, midday 7.5°C
+        val weatherForecast = (0 until 24).map { h ->
+            val temp = when (h) {
+                in 0..6 -> 1.8
+                in 7..10 -> 4.5
+                in 11..16 -> 7.5
+                in 17..20 -> 5.0
+                else -> 3.0
+            }
+            HourlyWeatherForecast(
+                dateTime = String.format(java.util.Locale.US, "2026-11-08T%02d:00", h),
+                outdoorTempC = temp
+            )
+        }
+
+        val optimizer = HolisticScheduleOptimizer(
+            config = HolisticOptimizationConfig(
+                targetHeatingTempC = 22.0,
+                targetDailyRuntimeHours = 8.0,
+                buildingLossKwPerK = 0.185,
+                coolingRateKPerHour = 0.38,
+                calibratedModulationAt10C = 44.0,
+                calibratedModulationSlopePerK = 5.64,
+                preference = OptimizationPreference.EFFICIENCY,
+                dailyBudgetEuro = 4.0,
+                liveStartingReturnTempC = 22.3,
+                estimatedPowerKw = 0.7
+            )
+        )
+
+        val plan = optimizer.buildSchedule(date, slots, weatherForecast)
+        assertNotNull(plan)
+        val win = plan!!.sharedWindows.first()
+        val startH = win.startMinutes / 60
+        val startM = win.startMinutes % 60
+        val endH = win.endMinutes / 60
+        val endM = win.endMinutes % 60
+        println("OPTIMIZED WINDOW: $startH:$startM - $endH:$endM (${win.durationMinutes} min), cost = ${plan.estimatedDailyCostEuro} EUR, 24h cost = ${plan.estimatedDailyTotalCostEuro} EUR")
+
+        // Midday window must be chosen over midnight because COP is 5.3 vs 4.1 at nearly identical electricity price
+        assertTrue("Efficiency Priority must schedule midday window (start >= 08:00) rather than midnight (was start: ${win.startMinutes}m = ${win.startMinutes / 60.0}h)",
+            win.startMinutes >= 480)
     }
 }

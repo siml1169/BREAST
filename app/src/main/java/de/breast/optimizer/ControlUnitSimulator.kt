@@ -69,7 +69,10 @@ class ControlUnitSimulator(
     val baselineInternalGainsKw: Double = 0.35, // 350W domestic internal & solar heat gains
     val dhwDailyElectricityKwh: Double = 0.0, // Ground-truth empirical DHW charging ~1.9 kWh
     val dhwCycleDurationMinutes: Int = 75,
-    val dhwCyclePowerKw: Double = 1.35
+    val dhwCyclePowerKw: Double = 1.35,
+    val minElecPowerKw: Double = 0.45,
+    val maxElecPowerKw: Double = 2.40,
+    val estimatedElectricalPowerKw: Double? = null
 ) {
     /**
      * Calculates the target return temperature according to the Bosch HPC 410 heating curve.
@@ -105,7 +108,7 @@ class ControlUnitSimulator(
             3.5
         }
         val compKw = thermalKw / cop
-        return (compKw + parasiticBaselinePowerKw).coerceIn(0.45, 2.40)
+        return (compKw + parasiticBaselinePowerKw).coerceIn(minElecPowerKw, maxElecPowerKw)
     }
 
     /**
@@ -170,20 +173,23 @@ class ControlUnitSimulator(
             val thermalSatisfied = targetDailyThermalEnergyNeedKwh != null && accumulatedThermalKwh >= targetDailyThermalEnergyNeedKwh
 
             // Closed-loop control unit hysteresis switching logic
-            if (!compressorActive) {
-                // Compressor starts when in comfort window and return temp cools below cut-in threshold
-                // and daily thermal energy demand has not yet been satisfied
-                if (isComfort && currentReturnT <= (targetReturnT - cutInHysteresisK) && needMoreHeat) {
-                    compressorActive = true
-                    cycleStartsCount++
-                }
+            if (!isComfort) {
+                // Outside scheduled comfort window, heat pump is in setback (compressor OFF)
+                compressorActive = false
             } else {
-                // Compressor stops when reaching target in setback, or reaching upper cut-out in comfort,
-                // OR when the total daily thermal energy need has been completely fulfilled
-                if (!isComfort && currentReturnT >= targetReturnT) {
-                    compressorActive = false
-                } else if (isComfort && (currentReturnT >= (targetReturnT + cutOutHysteresisK) || thermalSatisfied)) {
-                    compressorActive = false
+                if (!compressorActive) {
+                    // Compressor starts when in comfort window and return temp cools below cut-in threshold
+                    // and daily thermal energy demand has not yet been satisfied
+                    if (currentReturnT <= (targetReturnT - cutInHysteresisK) && needMoreHeat) {
+                        compressorActive = true
+                        cycleStartsCount++
+                    }
+                } else {
+                    // Compressor stops when reaching upper cut-out in comfort,
+                    // OR when the total daily thermal energy need has been completely fulfilled
+                    if (currentReturnT >= (targetReturnT + cutOutHysteresisK) || thermalSatisfied) {
+                        compressorActive = false
+                    }
                 }
             }
 

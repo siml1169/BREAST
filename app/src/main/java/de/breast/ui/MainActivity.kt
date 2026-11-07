@@ -1976,7 +1976,7 @@ class MainActivity : ComponentActivity() {
             }
 
             val holisticConfig = if (settingsStore.holisticOptimizationEnabled) {
-                settingsStore.buildHolisticOptimizationConfig()
+                settingsStore.buildHolisticOptimizationConfig(liveStartingReturnTempC = recentSnap?.returnTempC)
             } else null
 
             val daemon = AutoScheduleDaemon(
