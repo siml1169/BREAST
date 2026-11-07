@@ -129,13 +129,17 @@ class EmpiricalModulationAnalyzer(
             } else null
         }
 
-        // Filter snapshots where heating was actively running with reported modulation
+        // Filter snapshots where space heating was actively running with reported modulation
+        // Explicitly excludes Domestic Hot Water (DHW / Warmwasser) cycles
         val allHeating = snapshots.filter { s ->
             s.outdoorTempC != null &&
                 s.supplyTempC != null &&
                 s.returnTempC != null &&
                 s.modulationPct != null &&
                 s.modulationPct > 5.0 &&
+                !s.isDhwActive &&
+                (s.condenserTempC == null || s.condenserTempC <= 36.0) &&
+                (s.returnTempC <= 32.0) &&
                 (s.isHeatingActive || s.chStatus?.equals("on", ignoreCase = true) == true)
         }.sortedBy { it.epochSeconds }
 

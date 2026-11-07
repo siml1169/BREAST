@@ -15,6 +15,8 @@ data class ScheduleSimulationResult(
     val totalCostEuro: Double,
     val windowElectricityKwh: Double = 0.0,
     val windowCostEuro: Double = 0.0,
+    val dhwElectricityKwh: Double = 0.0,
+    val dhwCostEuro: Double = 0.0,
     val activeCompressorMinutes: Int,
     val cycleStartsCount: Int,
     val averageActivePowerKw: Double,
@@ -64,7 +66,10 @@ class ControlUnitSimulator(
     val circulationPumpKw: Double = 0.04,
     val standbyPowerKw: Double = 0.03,
     val parasiticBaselinePowerKw: Double = 0.050, // Generous 50W continuous baseline (secondary pump ~25W + electronics ~15W + primary pump)
-    val baselineInternalGainsKw: Double = 0.35 // 350W domestic internal & solar heat gains
+    val baselineInternalGainsKw: Double = 0.35, // 350W domestic internal & solar heat gains
+    val dhwDailyElectricityKwh: Double = 0.0, // Ground-truth empirical DHW charging ~1.9 kWh
+    val dhwCycleDurationMinutes: Int = 75,
+    val dhwCyclePowerKw: Double = 1.35
 ) {
     /**
      * Calculates the target return temperature according to the Bosch HPC 410 heating curve.
@@ -249,12 +254,33 @@ class ControlUnitSimulator(
         val avgActiveMod = if (activeSlotCount > 0) sumActiveMod / activeSlotCount else 0.0
         val avgActivePower = if (activeSlotCount > 0) sumActivePower / activeSlotCount else standbyPowerKw
 
+        // DHW empirical ground-truth allocation (scheduled during comfort window)
+        val dhwElecKwh = if (dhwDailyElectricityKwh > 0.0) dhwDailyElectricityKwh else 0.0
+        val dhwCostEuro: Double
+        if (dhwElecKwh > 0.0) {
+            val windowSlots = simulatedSlots.filter { it.isComfortSetpoint }
+            val avgWindowPrice = if (windowSlots.isNotEmpty()) {
+                windowSlots.map { if (it.index < slotGrossCtPerKwh.size) slotGrossCtPerKwh[it.index] else 30.0 }.average()
+            } else {
+                if (slotGrossCtPerKwh.isNotEmpty()) slotGrossCtPerKwh.average() else 30.0
+            }
+            dhwCostEuro = dhwElecKwh * (avgWindowPrice / 100.0)
+            totalElectricityKwh += dhwElecKwh
+            totalCostEuro += dhwCostEuro
+            windowElectricityKwh += dhwElecKwh
+            windowCostEuro += dhwCostEuro
+        } else {
+            dhwCostEuro = 0.0
+        }
+
         return ScheduleSimulationResult(
             simulatedSlots = simulatedSlots,
             totalElectricityKwh = totalElectricityKwh,
             totalCostEuro = totalCostEuro,
             windowElectricityKwh = windowElectricityKwh,
             windowCostEuro = windowCostEuro,
+            dhwElectricityKwh = dhwElecKwh,
+            dhwCostEuro = dhwCostEuro,
             activeCompressorMinutes = activeMinutes,
             cycleStartsCount = cycleStartsCount,
             averageActivePowerKw = avgActivePower,

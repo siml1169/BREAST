@@ -20,13 +20,17 @@ data class HeatPumpTelemetrySnapshot(
     val deltaTempC: Double?
         get() = if (supplyTempC != null && returnTempC != null) supplyTempC - returnTempC else null
 
-    val isHeatingActive: Boolean
-        get() = demand?.contains("ch", ignoreCase = true) == true ||
-            (chStatus?.equals("on", ignoreCase = true) == true && (modulationPct ?: 0.0) > 15.0 && (deltaTempC ?: 0.0) > 0.8)
-
     val isDhwActive: Boolean
         get() = demand?.contains("dhw", ignoreCase = true) == true ||
-            ((condenserTempC ?: 0.0) > 48.0 && (modulationPct ?: 0.0) > 20.0 && (supplyTempC ?: 0.0) < (returnTempC ?: 0.0))
+            (((condenserTempC ?: 0.0) > 36.0 || (returnTempC ?: 0.0) > 34.0) &&
+                (modulationPct ?: 0.0) > 10.0 &&
+                ((supplyTempC ?: 0.0) < (returnTempC ?: 0.0) || (returnTempC ?: 0.0) > 34.0))
+
+    val isHeatingActive: Boolean
+        get() = !isDhwActive && (
+            demand?.contains("ch", ignoreCase = true) == true ||
+                (chStatus?.equals("on", ignoreCase = true) == true && (modulationPct ?: 0.0) > 15.0 && (deltaTempC ?: 0.0) > 0.8)
+        )
 
     val isIdle: Boolean
         get() = !isHeatingActive && !isDhwActive && ((modulationPct ?: 0.0) <= 5.0)

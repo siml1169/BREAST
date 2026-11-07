@@ -125,7 +125,10 @@ data class HolisticOptimizationConfig(
     val grossBaseFloorCtPerKwh: Double = 25.40,
     val coolingRateKPerHour: Double = 0.20,
     val liveStartingReturnTempC: Double? = null,
-    val adaptiveCycleCount: Int = 0
+    val adaptiveCycleCount: Int = 0,
+    val dhwModelingEnabled: Boolean = false,
+    val dhwDailyEnergyKwh: Double = 1.90, // ~1.9 kWh ground-truth per DHW cycle
+    val dhwAveragePowerKw: Double = 1.35
 )
 
 data class ScoredRasterSlot(
@@ -282,7 +285,9 @@ class HolisticScheduleOptimizer(
                 circulationPumpKw = config.circulationPumpKw,
                 standbyPowerKw = setbackContinuousPowerKw,
                 parasiticBaselinePowerKw = config.customMeasuredParasiticLoadKw ?: config.parasiticBaselinePowerKw,
-                baselineInternalGainsKw = config.baselineInternalGainsKw
+                baselineInternalGainsKw = config.baselineInternalGainsKw,
+                dhwDailyElectricityKwh = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0,
+                dhwCyclePowerKw = config.dhwAveragePowerKw
             )
         } else null
 
@@ -733,6 +738,9 @@ class HolisticScheduleOptimizer(
             appendLine(String.format(java.util.Locale.US, "   • Active Electrical Draw: %.2f kW", finalMetrics.avgPowerKw))
             appendLine(String.format(java.util.Locale.US, "   • Active Window Electrical Consumption: %.1f kWh (%.1fh)", finalMetrics.windowElectricityKwh, hours))
             appendLine(String.format(java.util.Locale.US, "   • Setback Parasitic & Circulation Draw: %.2f kWh (%.1fh @ %dW)", setbackElecKwh, offHours, setbackPowerW))
+            if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
+                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW Model): +%.1f kWh (+%.2f € @ window rate)", config.dhwDailyEnergyKwh, config.dhwDailyEnergyKwh * (avgGross / 100.0)))
+            }
             appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electrical Consumption: %.1f kWh", finalMetrics.dailyElectricityKwh))
             appendLine()
             appendLine("4. Tariff & Cost:")
@@ -841,11 +849,19 @@ class HolisticScheduleOptimizer(
                 val avgGrossCt = if (slotGrossCt.isNotEmpty()) slotGrossCt.average() else 30.0
                 val setbackCostEuro = setbackElecKwh * (avgGrossCt / 100.0)
 
+                val dhwElecKwh = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0
+                val avgGrossInWin = if (on > 0 && slotGrossCt.isNotEmpty()) {
+                    val sliceEnd = min(endIdx, slotGrossCt.size)
+                    val sliceStart = min(startIdx, sliceEnd)
+                    if (sliceStart < sliceEnd) slotGrossCt.slice(sliceStart until sliceEnd).average() else avgGrossCt
+                } else avgGrossCt
+                val dhwCostEuro = dhwElecKwh * (avgGrossInWin / 100.0)
+
                 WindowEvalResult(
-                    windowCostEuro = euroCost,
-                    dailyCostEuro = euroCost + setbackCostEuro,
-                    windowElectricityKwh = clampedElecKwh,
-                    dailyElectricityKwh = clampedElecKwh + setbackElecKwh,
+                    windowCostEuro = euroCost + dhwCostEuro,
+                    dailyCostEuro = euroCost + setbackCostEuro + dhwCostEuro,
+                    windowElectricityKwh = clampedElecKwh + dhwElecKwh,
+                    dailyElectricityKwh = clampedElecKwh + setbackElecKwh + dhwElecKwh,
                     avgPowerKw = avgPowerKw,
                     modulationPct = physicalModPct
                 )

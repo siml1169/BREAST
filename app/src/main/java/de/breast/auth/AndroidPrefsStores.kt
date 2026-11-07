@@ -431,6 +431,14 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
         get() = prefs.getString("last_learned_timestamp_iso", null)
         set(value) = prefs.edit().putString("last_learned_timestamp_iso", value).apply()
 
+    var dhwModelingEnabled: Boolean
+        get() = prefs.getBoolean("dhw_modeling_enabled", true)
+        set(value) = prefs.edit().putBoolean("dhw_modeling_enabled", value).apply()
+
+    var dhwDailyEnergyKwh: Double
+        get() = prefs.getFloat("dhw_daily_energy_kwh", 1.90f).toDouble()
+        set(value) = prefs.edit().putFloat("dhw_daily_energy_kwh", value.toFloat()).apply()
+
     fun buildHolisticOptimizationConfig(
         targetHeatingTempC: Double = sliderTempC,
         liveStartingReturnTempC: Double? = null
@@ -451,7 +459,9 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             dailyBudgetEuro = dailyBudgetEuro,
             preference = OptimizationPreference.fromId(optimizationPreference),
             liveStartingReturnTempC = liveStartingReturnTempC,
-            adaptiveCycleCount = 0
+            adaptiveCycleCount = 0,
+            dhwModelingEnabled = dhwModelingEnabled,
+            dhwDailyEnergyKwh = dhwDailyEnergyKwh
         )
     }
 

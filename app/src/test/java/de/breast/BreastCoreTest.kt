@@ -19,6 +19,8 @@ import de.breast.optimizer.OperationDurationSlider
 import de.breast.optimizer.SwitchProgramScheduler
 import de.breast.optimizer.SwitchScheduleConfig
 import de.breast.optimizer.TimeWindow
+import de.breast.telemetry.EmpiricalDhwAnalyzer
+import de.breast.telemetry.EmpiricalDhwProfile
 import de.breast.telemetry.EmpiricalModulationAnalyzer
 import de.breast.telemetry.EmpiricalModulationProfile
 import de.breast.telemetry.HeatPumpTelemetrySnapshot
@@ -3217,5 +3219,166 @@ class BreastCoreTest {
         assertEquals("When even 1.5h exceeds budget, runtime cut reduces to exactly 1.5 hours floor (90 min)", 90, plan!!.plannedOperationMinutes)
         assertEquals(1.5, plan.plannedOperationMinutes / 60.0, 1e-6)
         assertTrue("Budget cut must be noted", plan.budgetCutMinutes > 0)
+    }
+
+    @Test
+    fun `EmpiricalDhwAnalyzer correctly identifies DHW cycles, calculates COP, electrical power, and cost`() {
+        val baseEpoch = 1793176000L
+        val dhwSnapshots = listOf(
+            HeatPumpTelemetrySnapshot(
+                timestampIso = "2026-10-28T08:00:00Z",
+                epochSeconds = baseEpoch,
+                outdoorTempC = 11.0,
+                supplyTempC = 21.0,
+                returnTempC = 38.0,
+                condenserTempC = 44.0,
+                modulationPct = 48.0,
+                chStatus = "on",
+                spotPriceGrossCt = 30.0
+            ),
+            HeatPumpTelemetrySnapshot(
+                timestampIso = "2026-10-28T08:20:00Z",
+                epochSeconds = baseEpoch + 1200L,
+                outdoorTempC = 11.2,
+                supplyTempC = 21.0,
+                returnTempC = 45.0,
+                condenserTempC = 50.0,
+                modulationPct = 48.0,
+                chStatus = "on",
+                spotPriceGrossCt = 30.0
+            ),
+            HeatPumpTelemetrySnapshot(
+                timestampIso = "2026-10-28T08:45:00Z",
+                epochSeconds = baseEpoch + 2700L,
+                outdoorTempC = 11.4,
+                supplyTempC = 21.0,
+                returnTempC = 50.0,
+                condenserTempC = 55.0,
+                modulationPct = 48.0,
+                chStatus = "on",
+                spotPriceGrossCt = 30.0
+            )
+        )
+
+        val analyzer = EmpiricalDhwAnalyzer()
+        val profile = analyzer.analyzeDhwProfile(dhwSnapshots)
+
+        assertEquals("Should detect 1 DHW charging cycle", 1, profile.detectedCyclesCount)
+        assertEquals(3, profile.totalDhwSamples)
+        assertEquals(45.0, profile.avgCycleDurationMinutes, 0.1)
+        assertEquals(48.0, profile.avgCycleModulationPct, 0.1)
+        assertTrue("DHW condenser temperature should be around 50°C", profile.avgCondenserTempC in 48.0..52.0)
+        assertTrue("DHW thermodynamic COP should be around 3.0 to 3.6", profile.inferredDhwCop in 2.8..3.8)
+        assertTrue("DHW cycle electrical power should be ~1.2 to 1.6 kW", profile.avgCyclePowerKw in 1.1..1.7)
+        assertTrue("DHW electricity consumption should be ~0.8 to 1.5 kWh", profile.avgCycleElectricityKwh in 0.7..1.6)
+
+        val estimatedCost = profile.predictCycleCostEuro(30.0)
+        assertTrue("Cycle cost at 30 ct should be ~0.25 to 0.50 EUR", estimatedCost in 0.20..0.55)
+    }
+
+    @Test
+    fun `EmpiricalModulationAnalyzer isolates space heating and excludes high-modulation DHW cycles`() {
+        val baseEpoch = 1793500000L
+        val snapshots = mutableListOf<HeatPumpTelemetrySnapshot>()
+
+        // 8 space heating steady-state samples across outdoor temps 8°C to 14°C:
+        // Mod = 42% @ 10°C, slope -5%/K
+        val heatingTemps = listOf(8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 10.5)
+        for ((idx, tOut) in heatingTemps.withIndex()) {
+            val mod = (42.0 + 5.0 * (10.0 - tOut)).coerceIn(28.0, 70.0)
+            snapshots.add(
+                HeatPumpTelemetrySnapshot(
+                    timestampIso = "2026-11-01T0${idx}:00:00Z",
+                    epochSeconds = baseEpoch + idx * 3600L,
+                    outdoorTempC = tOut,
+                    supplyTempC = 28.0,
+                    returnTempC = 24.0,
+                    condenserTempC = 30.0,
+                    setpointTempC = 22.0,
+                    modulationPct = mod,
+                    demand = "ch",
+                    chStatus = "on"
+                )
+            )
+        }
+
+        // Add 2 DHW anomaly samples at warm 11.6°C with 81% modulation (like snapshot 684)
+        snapshots.add(
+            HeatPumpTelemetrySnapshot(
+                timestampIso = "2026-11-01T11:05:00Z",
+                epochSeconds = baseEpoch + 30000L,
+                outdoorTempC = 11.6,
+                supplyTempC = 25.1,
+                returnTempC = 44.1,
+                condenserTempC = 51.6,
+                setpointTempC = 22.0,
+                modulationPct = 81.0,
+                chStatus = "on" // Bosch gateway reports "on" during DHW!
+            )
+        )
+
+        val analyzer = EmpiricalModulationAnalyzer()
+        val profile = analyzer.analyzeModulationProfile(snapshots)
+
+        assertNotNull(profile)
+        // Verified: The DHW 81% spike is strictly excluded!
+        assertEquals(8, profile!!.totalHeatingSamples)
+        assertTrue("Max observed modulation in space heating profile must be below 80%", profile.maxObservedModulationPct < 80.0)
+        assertTrue("R² of space heating PID model should remain high without DHW corruption (was: ${profile.rSquared})", profile.rSquared > 0.85)
+    }
+
+    @Test
+    fun `HolisticScheduleOptimizer with dhwModelingEnabled integrates DHW electricity and cost into active window and daily total`() {
+        val date = java.time.LocalDate.of(2026, 11, 7)
+        val dayStart = date.atStartOfDay(java.time.ZoneId.of("Europe/Berlin")).toInstant().epochSecond
+        val slots = (0 until 24).map { h ->
+            SpotPriceSlot(
+                startEpochSeconds = dayStart + h * 3600L,
+                endEpochSeconds = dayStart + (h + 1) * 3600L,
+                spotEurPerMwh = 60.0,
+                spotNetCtPerKwh = 6.0,
+                totalGrossCtPerKwh = 30.0
+            )
+        }
+
+        val configWithoutDhw = HolisticOptimizationConfig(
+            targetHeatingTempC = 21.5,
+            targetDailyRuntimeHours = 6.0,
+            dhwModelingEnabled = false,
+            buildingLossKwPerK = 0.150
+        )
+
+        val configWithDhw = HolisticOptimizationConfig(
+            targetHeatingTempC = 21.5,
+            targetDailyRuntimeHours = 6.0,
+            dhwModelingEnabled = true,
+            dhwDailyEnergyKwh = 1.90,
+            buildingLossKwPerK = 0.150
+        )
+
+        val optimizerWithout = HolisticScheduleOptimizer(configWithoutDhw)
+        val optimizerWith = HolisticScheduleOptimizer(configWithDhw)
+
+        val planWithout = optimizerWithout.buildSchedule(date, slots)
+        val planWith = optimizerWith.buildSchedule(date, slots)
+
+        assertNotNull(planWithout)
+        assertNotNull(planWith)
+
+        val winWithout = planWithout!!.sharedWindows.first()
+        val winWith = planWith!!.sharedWindows.first()
+
+        assertEquals("DHW allocation should add exactly 1.90 kWh to window electricity",
+            winWithout.estimatedElectricityKwh + 1.90, winWith.estimatedElectricityKwh, 0.05)
+        assertEquals("DHW allocation should add exactly 1.90 kWh to daily electricity",
+            planWithout.estimatedDailyTotalElectricityKwh + 1.90, planWith.estimatedDailyTotalElectricityKwh, 0.05)
+
+        // At 30 ct/kWh, 1.90 kWh = 0.57 EUR
+        val expectedDhwCost = 1.90 * 0.30
+        assertEquals("DHW allocation should add estimated DHW cost to window cost",
+            winWithout.estimatedWindowCostEuro + expectedDhwCost, winWith.estimatedWindowCostEuro, 0.02)
+
+        assertTrue("Physics audit must document DHW allocation",
+            planWith.physicsBreakdown!!.contains("Domestic Hot Water (DHW Model)"))
     }
 }
