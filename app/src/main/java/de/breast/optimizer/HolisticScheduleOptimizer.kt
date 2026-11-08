@@ -764,16 +764,24 @@ class HolisticScheduleOptimizer(
             appendLine(String.format(java.util.Locale.US, "   • Thermodynamic Reciprocal COP: %.2f", cop))
             appendLine(String.format(java.util.Locale.US, "   • Bosch Inverter Speed: ~%.0f%% modulation", finalMetrics.modulationPct))
             appendLine(String.format(java.util.Locale.US, "   • Active Electrical Draw: %.2f kW", finalMetrics.avgPowerKw))
-            appendLine(String.format(java.util.Locale.US, "   • Active Window Electrical Consumption: %.1f kWh (%.1fh)", finalMetrics.windowElectricityKwh, hours))
-            appendLine(String.format(java.util.Locale.US, "   • Setback Parasitic & Circulation Draw: %.2f kWh (%.1fh @ %dW)", setbackElecKwh, offHours, setbackPowerW))
+            val dhwElec = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0
+            val spaceHeatingKwh = kotlin.math.max(0.0, finalMetrics.windowElectricityKwh - dhwElec)
+            val dhwCost = if (config.dhwModelingEnabled) dhwElec * (avgGross / 100.0) else 0.0
+            val spaceHeatingCost = kotlin.math.max(0.0, finalMetrics.windowCostEuro - dhwCost)
+
+            appendLine(String.format(java.util.Locale.US, "   • Active Space Heating Window: %.1f kWh (%.1fh @ %.2f kW)", spaceHeatingKwh, hours, finalMetrics.avgPowerKw))
             if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
-                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW Model): +%.1f kWh (+%.2f € @ window rate)", config.dhwDailyEnergyKwh, config.dhwDailyEnergyKwh * (avgGross / 100.0)))
+                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW Model): +%.1f kWh (+%.2f € @ window rate)", config.dhwDailyEnergyKwh, dhwCost))
             }
+            appendLine(String.format(java.util.Locale.US, "   • Setback Parasitic & Circulation Draw: %.2f kWh (%.1fh @ %dW)", setbackElecKwh, offHours, setbackPowerW))
             appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electrical Consumption: %.1f kWh", finalMetrics.dailyElectricityKwh))
             appendLine()
             appendLine("4. Tariff & Cost:")
             appendLine(String.format(java.util.Locale.US, "   • EPEX Spot Average (Window): %.1f ct/kWh gross (%.1f ct/kWh net)", avgGross, avgNet))
-            appendLine(String.format(java.util.Locale.US, "   • Active Window Operating Cost: %.2f €", finalMetrics.windowCostEuro))
+            appendLine(String.format(java.util.Locale.US, "   • Space Heating Window Cost: %.2f €", spaceHeatingCost))
+            if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
+                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water Cost: +%.2f €", dhwCost))
+            }
             appendLine(String.format(java.util.Locale.US, "   • Setback Standby & Circulation Cost: %.2f €", setbackCostEuro))
             appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electricity Cost: %.2f €", finalMetrics.dailyCostEuro))
             appendLine()

@@ -98,7 +98,6 @@ class ControlUnitSimulator(
      */
     fun predictElectricalPowerKw(modulationPct: Double, outdoorTempC: Double? = null): Double {
         if (modulationPct <= 0.0) return parasiticBaselinePowerKw
-        val thermalKw = (modulationPct / 100.0) * nominalThermalKw
         val cop = if (outdoorTempC != null) {
             val flowTemp = comfortRoomTempC + heatingCurveSlope * (20.0 - outdoorTempC) + parallelShiftK
             val deltaLift = max(4.0, flowTemp - outdoorTempC)
@@ -107,7 +106,14 @@ class ControlUnitSimulator(
         } else {
             3.5
         }
-        val compKw = thermalKw / cop
+        val compKw = if (estimatedElectricalPowerKw != null && estimatedElectricalPowerKw > 0.1) {
+            val pCompRef = max(0.20, estimatedElectricalPowerKw - parasiticBaselinePowerKw)
+            val modFactor = 0.35 + 0.65 * (modulationPct / 50.0)
+            pCompRef * modFactor
+        } else {
+            val thermalKw = (modulationPct / 100.0) * nominalThermalKw
+            thermalKw / cop
+        }
         return (compKw + parasiticBaselinePowerKw).coerceIn(minElecPowerKw, maxElecPowerKw)
     }
 
@@ -200,8 +206,8 @@ class ControlUnitSimulator(
 
             if (compressorActive) {
                 modPct = predictModulationPct(outdoorT)
-                thermalKw = (modPct / 100.0) * nominalThermalKw
                 elecPowerKw = predictElectricalPowerKw(modPct, outdoorT)
+                thermalKw = (modPct / 100.0) * nominalThermalKw
                 activeMinutes += rasterMinutes
                 sumActiveMod += modPct
                 sumActivePower += elecPowerKw
