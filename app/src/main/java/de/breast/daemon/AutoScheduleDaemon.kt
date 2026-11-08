@@ -242,6 +242,28 @@ class AutoScheduleDaemon(
             }
         }
 
+        // 2. Online Adaptive Power Observer: Learn compressor electrical power from recorded energy / time
+        val currentSettingsStore = settingsStore
+        if (resolvedGatewayId != null && !dryRun && store != null && currentSettingsStore != null) {
+            runCatching {
+                val powerObserver = de.breast.telemetry.AdaptivePowerObserver()
+                val targetLearnDate = today.minusDays(1)
+                val powerCalib = powerObserver.performOnlineCalibration(
+                    targetDate = targetLearnDate,
+                    snapshots = store.getRecentSnapshots(limit = 2500),
+                    pointTClient = pointTClient,
+                    gatewayId = resolvedGatewayId,
+                    store = currentSettingsStore
+                )
+                if (powerCalib != null) {
+                    logs.add("[$nowIso] ${powerCalib.logMessage}")
+                    effectiveHolisticConfig = currentSettingsStore.buildHolisticOptimizationConfig()
+                }
+            }.onFailure { err ->
+                logs.add("[$nowIso] Adaptive power calibration notice: ${err.message}")
+            }
+        }
+
         val todayComplete = scheduler.hasCompleteDayPrices(today, spotSlots)
         val tomorrowComplete = scheduler.hasCompleteDayPrices(tomorrow, spotSlots)
 

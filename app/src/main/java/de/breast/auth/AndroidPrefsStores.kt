@@ -88,7 +88,7 @@ enum class AppLanguage(val code: String, val title: String) {
     }
 }
 
-class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParametersStore {
+class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParametersStore, de.breast.telemetry.PowerParametersStore {
     private val prefs = context.applicationContext.getSharedPreferences("breast_user_settings", Context.MODE_PRIVATE)
 
     var heatPumpName: String
@@ -192,9 +192,20 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
         historicalHeatLoss25kWeight = totalWeight
     }
 
-    var estimatedPowerKw: Double
+    override var estimatedPowerKw: Double
         get() = prefs.getFloat("estimated_power_kw", 0.7f).toDouble()
         set(value) = prefs.edit().putFloat("estimated_power_kw", value.toFloat()).apply()
+
+    override var learnedPowerCycleCount: Int
+        get() = prefs.getInt("learned_power_cycle_count", 0)
+        set(value) = prefs.edit().putInt("learned_power_cycle_count", value).apply()
+
+    override var lastLearnedPowerDate: String?
+        get() = prefs.getString("last_learned_power_date", null)
+        set(value) = prefs.edit().putString("last_learned_power_date", value).apply()
+
+    override val parasiticBaselinePowerKw: Double
+        get() = parasiticBaselinePowerWatts / 1000.0
 
     /**
      * Continuous parasitic electrical baseline load in Watts (secondary underfloor pump + standby electronics).

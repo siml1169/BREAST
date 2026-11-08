@@ -19,6 +19,9 @@ import de.breast.optimizer.OperationDurationSlider
 import de.breast.optimizer.SwitchProgramScheduler
 import de.breast.optimizer.SwitchScheduleConfig
 import de.breast.optimizer.TimeWindow
+import de.breast.telemetry.AdaptivePowerObserver
+import de.breast.telemetry.AdaptiveThermalObserver
+import de.breast.telemetry.PowerParametersStore
 import de.breast.telemetry.EmpiricalDhwAnalyzer
 import de.breast.telemetry.EmpiricalDhwProfile
 import de.breast.telemetry.EmpiricalModulationAnalyzer
@@ -2214,6 +2217,87 @@ class BreastCoreTest {
         assertNotNull(secondResult)
         assertFalse("Second run with identical data must not apply duplicate update", secondResult!!.isUpdated)
         assertEquals(1, store.learnedCycleCount)
+    }
+
+    private class InMemoryPowerParametersStore(
+        override var estimatedPowerKw: Double = 0.70,
+        override var learnedPowerCycleCount: Int = 0,
+        override var lastLearnedPowerDate: String? = null,
+        override val parasiticBaselinePowerKw: Double = 0.05
+    ) : PowerParametersStore
+
+    @Test
+    fun `AdaptivePowerObserver continuously learns compressor electrical power from recorded energy and modulation via EMA`() {
+        val store = InMemoryPowerParametersStore(
+            estimatedPowerKw = 0.70,
+            learnedPowerCycleCount = 0,
+            lastLearnedPowerDate = null
+        )
+        val observer = AdaptivePowerObserver(learningRateEma = 0.20)
+
+        // Day 1: 5.0h heating, recorded energy = 2.50 kWh (0.50 kW active draw) at 35% average modulation
+        val res1 = observer.observeCycle(
+            date = "2026-11-06",
+            activeHeatingHours = 5.0,
+            recordedEnergyKwh = 2.50,
+            averageModulationPct = 35.0,
+            store = store
+        )
+
+        assertNotNull("Observation result should be non-null for valid heating cycle", res1)
+        assertTrue("Observation should be flagged as updated", res1!!.isUpdated)
+        assertEquals(1, store.learnedPowerCycleCount)
+        assertEquals("2026-11-06", store.lastLearnedPowerDate)
+
+        // Previous power was 0.70 kW. Measured draw was 0.50 kW.
+        // Inferred P_ref is ~0.61 kW. With 20% EMA, updated power should nudge down:
+        assertTrue("Updated power should nudge down smoothly (was: ${store.estimatedPowerKw})",
+            store.estimatedPowerKw in 0.65..0.69)
+
+        // Re-running with same date must deduplicate without double-counting:
+        val resDup = observer.observeCycle(
+            date = "2026-11-06",
+            activeHeatingHours = 5.0,
+            recordedEnergyKwh = 2.50,
+            averageModulationPct = 35.0,
+            store = store
+        )
+        assertNotNull(resDup)
+        assertFalse("Duplicate date must not apply another update", resDup!!.isUpdated)
+        assertEquals(1, store.learnedPowerCycleCount)
+
+        // Day 2: 7.0h heating on cold day, recorded energy = 5.60 kWh (0.80 kW draw) at 70% modulation
+        val res2 = observer.observeCycle(
+            date = "2026-11-07",
+            activeHeatingHours = 7.0,
+            recordedEnergyKwh = 5.60,
+            averageModulationPct = 70.0,
+            store = store
+        )
+        assertNotNull(res2)
+        assertTrue("Second day should apply update", res2!!.isUpdated)
+        assertEquals(2, store.learnedPowerCycleCount)
+        assertEquals("2026-11-07", store.lastLearnedPowerDate)
+        assertTrue("Power should adapt smoothly between 0.65 and 0.75 kW (was: ${store.estimatedPowerKw})",
+            store.estimatedPowerKw in 0.65..0.75)
+    }
+
+    @Test
+    fun `AdaptivePowerObserver rejects cycles with insufficient duration or negligible energy`() {
+        val store = InMemoryPowerParametersStore(estimatedPowerKw = 0.70)
+        val observer = AdaptivePowerObserver(minActiveHours = 0.75, minRecordedEnergyKwh = 0.20)
+
+        // Short 15-minute defrost or transient burst
+        val shortCycle = observer.observeCycle(
+            date = "2026-11-08",
+            activeHeatingHours = 0.25,
+            recordedEnergyKwh = 0.15,
+            averageModulationPct = 30.0,
+            store = store
+        )
+        assertNull("Short cycles below minActiveHours must be ignored", shortCycle)
+        assertEquals(0, store.learnedPowerCycleCount)
+        assertEquals(0.70, store.estimatedPowerKw, 1e-6)
     }
 
     @Test
