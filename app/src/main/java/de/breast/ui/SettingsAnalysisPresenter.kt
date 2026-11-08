@@ -3,6 +3,7 @@ package de.breast.ui
 import de.breast.telemetry.SetbackEstimationResult
 import de.breast.telemetry.EmpiricalModulationProfile
 import de.breast.telemetry.OperatingPointProjection
+import de.breast.telemetry.PowerObservationResult
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -46,6 +47,20 @@ data class ModulationAnalysisUiModel(
     val nuanceItems: List<String>,
     val projections: List<OperatingPointProjection>,
     val applyButtonText: String
+)
+
+data class PowerAnalysisUiModel(
+    val statusText: String,
+    val statusSuccess: Boolean,
+    val badges: List<AnalysisBadge>,
+    val chip1: AnalysisMetricChip, // Measured Power E/Δt
+    val chip2: AnalysisMetricChip, // Average Modulation
+    val chip3: AnalysisMetricChip, // Inferred Reference Power P_ref @ 50%
+    val chip4: AnalysisMetricChip, // Learned Continuous Power via EMA
+    val nuanceTitle: String,
+    val nuanceItems: List<String>,
+    val applyButtonText: String,
+    val calibratedPowerKw: Double
 )
 
 data class SafeClearDatabaseResult(
@@ -195,6 +210,66 @@ object SettingsAnalysisPresenter {
             nuanceItems = nuanceItems,
             projections = profile.getOperatingProjections(),
             applyButtonText = String.format(java.util.Locale.US, i18n.applyModulationBtnFormat, baseStr, slopeStr)
+        )
+    }
+
+    fun buildPowerUiModel(
+        result: PowerObservationResult?,
+        currentPowerKw: Double,
+        cycleCount: Int,
+        lastLearnedDate: String?,
+        parasiticWatts: Double,
+        i18n: AppStrings,
+        palette: AnalysisPalette = AnalysisPalette()
+    ): PowerAnalysisUiModel? {
+        if (result == null) return null
+
+        val badges = mutableListOf<AnalysisBadge>()
+        badges.add(AnalysisBadge(result.date, palette.accentGreenBg, palette.accentGreenStroke, palette.accentGreen))
+        badges.add(AnalysisBadge(String.format(java.util.Locale.US, "%.2f kWh", result.recordedEnergyKwh), palette.badgeBg, palette.badgeStroke, palette.accentBlue))
+        badges.add(AnalysisBadge(String.format(java.util.Locale.US, "%.1f h active", result.activeHeatingHours), palette.badgeBg, palette.badgeStroke, palette.textSecondary))
+        badges.add(AnalysisBadge(String.format(java.util.Locale.US, "Cycle #%d", result.cycleCount), palette.accentBlueBg, palette.accentBlueStroke, palette.accentBlue))
+
+        val chip1 = AnalysisMetricChip(
+            i18n.chipMeasuredPower,
+            String.format(java.util.Locale.US, "%.2f kW", result.averagePowerKw),
+            String.format(java.util.Locale.US, "%.2f kWh / %.1fh", result.recordedEnergyKwh, result.activeHeatingHours)
+        )
+        val chip2 = AnalysisMetricChip(
+            i18n.chipAvgModulation,
+            String.format(java.util.Locale.US, "%.1f%%", result.averageModulationPct),
+            "Scaled @ 50% Ref"
+        )
+        val chip3 = AnalysisMetricChip(
+            i18n.chipInferredRef,
+            String.format(java.util.Locale.US, "%.2f kW", result.inferredReferencePowerKw),
+            "@ 50% Shaft Load"
+        )
+        val chip4 = AnalysisMetricChip(
+            i18n.chipFilteredPower,
+            String.format(java.util.Locale.US, "%.2f kW", result.updatedEstimatedPowerKw),
+            String.format(java.util.Locale.US, "EMA α=0.15 (#%d)", result.cycleCount)
+        )
+
+        val nuanceItems = listOf(
+            String.format(java.util.Locale.US, i18n.nuancePowerIdentityFormat, result.recordedEnergyKwh, result.activeHeatingHours, result.averagePowerKw),
+            String.format(java.util.Locale.US, i18n.nuanceInverterMappingFormat, result.averageModulationPct, result.inferredReferencePowerKw),
+            String.format(java.util.Locale.US, i18n.nuanceEmaFormat, result.previousEstimatedPowerKw, result.updatedEstimatedPowerKw, result.cycleCount),
+            String.format(java.util.Locale.US, i18n.nuanceParasiticLoadFormat, parasiticWatts)
+        )
+
+        return PowerAnalysisUiModel(
+            statusText = i18n.powerCalibratedMsg,
+            statusSuccess = true,
+            badges = badges,
+            chip1 = chip1,
+            chip2 = chip2,
+            chip3 = chip3,
+            chip4 = chip4,
+            nuanceTitle = i18n.nuanceBoxTitle,
+            nuanceItems = nuanceItems,
+            applyButtonText = String.format(java.util.Locale.US, i18n.applyPowerBtnFormat, result.updatedEstimatedPowerKw),
+            calibratedPowerKw = result.updatedEstimatedPowerKw
         )
     }
 

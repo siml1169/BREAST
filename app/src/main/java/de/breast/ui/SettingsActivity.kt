@@ -37,6 +37,10 @@ import androidx.activity.ComponentActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import de.breast.api.PointTApiClient
+import de.breast.auth.AndroidPrefsTokenStore
+import de.breast.auth.AppLanguage
+import de.breast.auth.SingleKeyAuthManager
 import de.breast.auth.UserSettingsStore
 import de.breast.daemon.BreastNotificationHelper
 import de.breast.daemon.SpotScheduleJobService
@@ -87,6 +91,9 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var settingsStore: UserSettingsStore
     private lateinit var telemetryStore: SqliteTelemetryStore
     private val httpClient = OkHttpClient()
+    private val tokenStore by lazy { AndroidPrefsTokenStore(this) }
+    private val authManager by lazy { SingleKeyAuthManager(httpClient, tokenStore) }
+    private val pointTClient by lazy { PointTApiClient(httpClient, authManager) }
     private val spotClient get() = SpotPriceClient(httpClient, settingsStore.buildTariffConfig())
     private val weatherClient by lazy {
         WeatherForecastClient(
@@ -1307,6 +1314,215 @@ class SettingsActivity : ComponentActivity() {
             modulationCard.addView(analyzeModulationBtn)
             modulationCard.addView(applyModulationBtn)
             addView(modulationCard)
+
+            // Adaptive Inverter Power Telemetry Card
+            val powerCard = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.setMargins(0, dp(4), 0, dp(8))
+                layoutParams = lp
+            }
+
+            val powerStatusText = TextView(this@SettingsActivity).apply {
+                val curPower = settingsStore.estimatedPowerKw
+                val cycles = settingsStore.learnedPowerCycleCount
+                val pluralSuffix = if (settingsStore.appLanguage == AppLanguage.DE) (if (cycles == 1) "" else "n") else (if (cycles == 1) "" else "s")
+                text = String.format(i18n.powerStatusDefault, curPower, cycles, pluralSuffix)
+                setTextColor(Color.parseColor(palette.textMuted))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setPadding(0, 0, 0, dp(4))
+            }
+            powerCard.addView(powerStatusText)
+
+            val powerDetailsContainer = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = View.GONE
+            }
+            powerCard.addView(powerDetailsContainer)
+
+            val applyPowerBtn = createStyledButton(
+                label = String.format(i18n.applyPowerBtnFormat, settingsStore.estimatedPowerKw),
+                bgHex = palette.accentGreenBg,
+                strokeHex = palette.accentGreenStroke,
+                textHex = palette.accentGreen
+            ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
+                visibility = View.GONE
+            }
+
+            var lastPowerResult: de.breast.telemetry.PowerObservationResult? = null
+
+            val analyzePowerBtn = createStyledButton(
+                label = i18n.analyzePowerBtn,
+                bgHex = palette.secondaryBtnBg,
+                strokeHex = palette.secondaryBtnStroke,
+                textHex = palette.accentBlue
+            ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+                layoutParams = lp
+                setOnClickListener {
+                    powerStatusText.text = i18n.scanningPowerMsg
+                    powerStatusText.setTextColor(Color.parseColor(palette.accentAmber))
+                    powerDetailsContainer.visibility = View.GONE
+                    applyPowerBtn.visibility = View.GONE
+                    lifecycleScope.launch {
+                        val snapshots = telemetryStore.getRecentSnapshots(25000)
+                        val tokens = tokenStore.loadTokens()
+                        val gwId = if (tokens != null) {
+                            runCatching { pointTClient.getGateways().firstOrNull()?.deviceId }.getOrNull()
+                        } else null
+
+                        val powerObserver = de.breast.telemetry.AdaptivePowerObserver()
+                        var observationResult: de.breast.telemetry.PowerObservationResult? = null
+                        val daysToTry = listOf(
+                            LocalDate.now().minusDays(1),
+                            LocalDate.now(),
+                            LocalDate.now().minusDays(2)
+                        )
+                        for (targetDay in daysToTry) {
+                            val res = powerObserver.performOnlineCalibration(
+                                targetDate = targetDay,
+                                snapshots = snapshots,
+                                pointTClient = pointTClient,
+                                gatewayId = gwId,
+                                store = settingsStore,
+                                applyToStore = false
+                            )
+                            if (res != null) {
+                                observationResult = res
+                                break
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            val uiModel = SettingsAnalysisPresenter.buildPowerUiModel(
+                                result = observationResult,
+                                currentPowerKw = settingsStore.estimatedPowerKw,
+                                cycleCount = settingsStore.learnedPowerCycleCount,
+                                lastLearnedDate = settingsStore.lastLearnedPowerDate,
+                                parasiticWatts = settingsStore.parasiticBaselinePowerKw * 1000.0,
+                                i18n = i18n,
+                                palette = palette.toAnalysisPalette()
+                            )
+                            if (uiModel != null) {
+                                lastPowerResult = observationResult
+
+                                powerStatusText.text = uiModel.statusText
+                                powerStatusText.setTextColor(Color.parseColor(palette.accentGreen))
+
+                                powerDetailsContainer.removeAllViews()
+
+                                // Badge Header with horizontal scrolling
+                                val badgeScroll = HorizontalScrollView(this@SettingsActivity).apply {
+                                    isHorizontalScrollBarEnabled = false
+                                    val bLp = LinearLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT
+                                    ).apply {
+                                        topMargin = dp(4)
+                                        bottomMargin = dp(6)
+                                    }
+                                    layoutParams = bLp
+                                }
+
+                                val badgeRow = LinearLayout(this@SettingsActivity).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    gravity = Gravity.CENTER_VERTICAL
+                                }
+                                badgeScroll.addView(badgeRow)
+
+                                for (b in uiModel.badges) {
+                                    badgeRow.addView(TextView(this@SettingsActivity).apply {
+                                        text = b.label
+                                        isSingleLine = true
+                                        setTextColor(Color.parseColor(b.textHex))
+                                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                                        setTypeface(typeface, Typeface.BOLD)
+                                        background = roundedBg(b.bgHex, b.strokeHex, cornerDp = 6)
+                                        setPadding(dp(7), dp(3), dp(7), dp(3))
+                                        val bLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                        bLp.setMargins(0, 0, dp(6), 0)
+                                        layoutParams = bLp
+                                    })
+                                }
+                                powerDetailsContainer.addView(badgeScroll)
+
+                                // 2x2 Metric Chips Grid
+                                val gridRow1 = LinearLayout(this@SettingsActivity).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    val rLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                    rLp.setMargins(0, dp(2), 0, dp(4))
+                                    layoutParams = rLp
+                                }
+                                gridRow1.addView(createMetricChip(uiModel.chip1.title, uiModel.chip1.value, uiModel.chip1.subtitle).apply {
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
+                                })
+                                gridRow1.addView(createMetricChip(uiModel.chip2.title, uiModel.chip2.value, uiModel.chip2.subtitle).apply {
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
+                                })
+                                powerDetailsContainer.addView(gridRow1)
+
+                                val gridRow2 = LinearLayout(this@SettingsActivity).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    val rLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                    rLp.setMargins(0, 0, 0, dp(4))
+                                    layoutParams = rLp
+                                }
+                                gridRow2.addView(createMetricChip(uiModel.chip3.title, uiModel.chip3.value, uiModel.chip3.subtitle).apply {
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
+                                })
+                                gridRow2.addView(createMetricChip(uiModel.chip4.title, uiModel.chip4.value, uiModel.chip4.subtitle).apply {
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
+                                })
+                                powerDetailsContainer.addView(gridRow2)
+
+                                // Nuances & Physical Adjustments Audit Box
+                                powerDetailsContainer.addView(createNuanceBox(uiModel.nuanceTitle, uiModel.nuanceItems))
+
+                                powerDetailsContainer.visibility = View.VISIBLE
+                                applyPowerBtn.text = uiModel.applyButtonText
+                                applyPowerBtn.visibility = View.VISIBLE
+                            } else {
+                                powerStatusText.text = i18n.noPowerRunsMsg
+                                powerStatusText.setTextColor(Color.parseColor(palette.accentAmber))
+                                powerDetailsContainer.visibility = View.GONE
+                                applyPowerBtn.visibility = View.GONE
+                            }
+                        }
+                    }
+                }
+            }
+
+            applyPowerBtn.setOnClickListener {
+                val res = lastPowerResult ?: return@setOnClickListener
+                settingsStore.estimatedPowerKw = res.updatedEstimatedPowerKw
+                settingsStore.learnedPowerCycleCount = res.cycleCount
+                settingsStore.lastLearnedPowerDate = res.date
+                Toast.makeText(this@SettingsActivity, "Adaptive compressor power updated to " + String.format(java.util.Locale.US, "%.2f kW!", res.updatedEstimatedPowerKw), Toast.LENGTH_SHORT).show()
+                applyPowerBtn.visibility = View.GONE
+                val cycles = settingsStore.learnedPowerCycleCount
+                val pluralSuffix = if (settingsStore.appLanguage == AppLanguage.DE) (if (cycles == 1) "" else "n") else (if (cycles == 1) "" else "s")
+                powerStatusText.text = String.format(i18n.powerStatusDefault, settingsStore.estimatedPowerKw, cycles, pluralSuffix)
+            }
+
+            powerCard.addView(analyzePowerBtn)
+            powerCard.addView(applyPowerBtn)
+            addView(powerCard)
 
             // Parasitic Electrical Baseline & Submeter Calibration
             val parasiticCard = LinearLayout(this@SettingsActivity).apply {

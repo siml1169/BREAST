@@ -2955,6 +2955,65 @@ class BreastCoreTest {
     }
 
     @Test
+    fun `SettingsAnalysisPresenter buildPowerUiModel executes cleanly across EN, DE, and ZH without formatting crashes`() {
+        val mockPowerResult = de.breast.telemetry.PowerObservationResult(
+            date = "2026-11-07",
+            activeHeatingHours = 6.8,
+            recordedEnergyKwh = 4.00,
+            averagePowerKw = 0.59,
+            averageModulationPct = 78.0,
+            inferredReferencePowerKw = 0.45,
+            previousEstimatedPowerKw = 0.70,
+            updatedEstimatedPowerKw = 0.66,
+            cycleCount = 1,
+            isUpdated = true,
+            logMessage = "Power observation calibrated"
+        )
+
+        for (lang in de.breast.auth.AppLanguage.entries) {
+            val i18n = de.breast.ui.BreastI18n.get(lang)
+
+            // Test 1: Full result
+            val model = de.breast.ui.SettingsAnalysisPresenter.buildPowerUiModel(
+                result = mockPowerResult,
+                currentPowerKw = 0.70,
+                cycleCount = 1,
+                lastLearnedDate = "2026-11-07",
+                parasiticWatts = 40.0,
+                i18n = i18n
+            )
+            assertNotNull("Power model must not be null for $lang", model)
+            assertTrue(model!!.statusText.isNotBlank())
+            assertEquals(4, model.badges.size)
+            assertTrue("Date badge present", model.badges.any { it.label == "2026-11-07" })
+            assertTrue("Energy badge present", model.badges.any { it.label.contains("4.00 kWh") })
+            assertEquals(i18n.chipMeasuredPower, model.chip1.title)
+            assertEquals("0.59 kW", model.chip1.value)
+            assertEquals(i18n.chipAvgModulation, model.chip2.title)
+            assertEquals("78.0%", model.chip2.value)
+            assertEquals(i18n.chipInferredRef, model.chip3.title)
+            assertEquals("0.45 kW", model.chip3.value)
+            assertEquals(i18n.chipFilteredPower, model.chip4.title)
+            assertEquals("0.66 kW", model.chip4.value)
+            assertEquals(4, model.nuanceItems.size)
+            assertTrue("Nuance items non-blank", model.nuanceItems.all { it.isNotBlank() })
+            assertTrue("Apply button contains 0.66", model.applyButtonText.contains("0.66"))
+            assertEquals(0.66, model.calibratedPowerKw, 0.001)
+
+            // Test 2: Null result
+            val nullModel = de.breast.ui.SettingsAnalysisPresenter.buildPowerUiModel(
+                result = null,
+                currentPowerKw = 0.70,
+                cycleCount = 1,
+                lastLearnedDate = null,
+                parasiticWatts = 40.0,
+                i18n = i18n
+            )
+            assertNull(nullModel)
+        }
+    }
+
+    @Test
     fun `SettingsAnalysisPresenter executeSafeClearDatabase in dev mode safely copies and deletes copy while preserving real database`() {
         val tempDir = java.nio.file.Files.createTempDirectory("breast_test_db").toFile()
         try {

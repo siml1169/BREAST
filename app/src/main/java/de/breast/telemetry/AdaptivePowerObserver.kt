@@ -66,26 +66,11 @@ class AdaptivePowerObserver(
         activeHeatingHours: Double,
         recordedEnergyKwh: Double,
         averageModulationPct: Double,
-        store: PowerParametersStore
+        store: PowerParametersStore,
+        applyToStore: Boolean = true
     ): PowerObservationResult? {
         if (activeHeatingHours < minActiveHours || recordedEnergyKwh < minRecordedEnergyKwh || averageModulationPct < minAverageModulationPct) {
             return null
-        }
-
-        if (store.lastLearnedPowerDate == date) {
-            return PowerObservationResult(
-                date = date,
-                activeHeatingHours = activeHeatingHours,
-                recordedEnergyKwh = recordedEnergyKwh,
-                averagePowerKw = recordedEnergyKwh / activeHeatingHours,
-                averageModulationPct = averageModulationPct,
-                inferredReferencePowerKw = store.estimatedPowerKw,
-                previousEstimatedPowerKw = store.estimatedPowerKw,
-                updatedEstimatedPowerKw = store.estimatedPowerKw,
-                cycleCount = store.learnedPowerCycleCount,
-                isUpdated = false,
-                logMessage = "Power observation for $date already incorporated into adaptive model (estimated: ${String.format(java.util.Locale.US, "%.2f", store.estimatedPowerKw)} kW)."
-            )
         }
 
         val measuredAvgPowerKw = recordedEnergyKwh / activeHeatingHours
@@ -104,11 +89,14 @@ class AdaptivePowerObserver(
         // Recursive Exponential Moving Average (EMA) update
         val newCompRef = (1.0 - learningRateEma) * prevCompRef + learningRateEma * inferredCompRefKw
         val newTotalPower = (newCompRef + parasitic).coerceIn(minAllowedPowerKw, maxAllowedPowerKw)
-        val newCycleCount = store.learnedPowerCycleCount + 1
+        val isAlreadyIncorporated = (store.lastLearnedPowerDate == date)
+        val targetCycleCount = if (isAlreadyIncorporated) store.learnedPowerCycleCount else store.learnedPowerCycleCount + 1
 
-        store.estimatedPowerKw = newTotalPower
-        store.learnedPowerCycleCount = newCycleCount
-        store.lastLearnedPowerDate = date
+        if (applyToStore && !isAlreadyIncorporated) {
+            store.estimatedPowerKw = newTotalPower
+            store.learnedPowerCycleCount = targetCycleCount
+            store.lastLearnedPowerDate = date
+        }
 
         val logMsg = String.format(
             java.util.Locale.US,
@@ -120,9 +108,9 @@ class AdaptivePowerObserver(
             averageModulationPct,
             inferredTotalRefKw,
             prevPower,
-            newTotalPower,
+            if (isAlreadyIncorporated && !applyToStore) prevPower else newTotalPower,
             learningRateEma,
-            newCycleCount
+            targetCycleCount
         )
 
         return PowerObservationResult(
@@ -134,8 +122,8 @@ class AdaptivePowerObserver(
             inferredReferencePowerKw = inferredTotalRefKw,
             previousEstimatedPowerKw = prevPower,
             updatedEstimatedPowerKw = newTotalPower,
-            cycleCount = newCycleCount,
-            isUpdated = true,
+            cycleCount = targetCycleCount,
+            isUpdated = !isAlreadyIncorporated && applyToStore,
             logMessage = logMsg
         )
     }
@@ -147,28 +135,28 @@ class AdaptivePowerObserver(
     suspend fun performOnlineCalibration(
         targetDate: LocalDate,
         snapshots: List<HeatPumpTelemetrySnapshot>,
-        pointTClient: PointTApiClient,
-        gatewayId: String,
-        store: PowerParametersStore
+        pointTClient: PointTApiClient? = null,
+        gatewayId: String? = null,
+        store: PowerParametersStore,
+        applyToStore: Boolean = true
     ): PowerObservationResult? {
         val dateStr = targetDate.toString()
-        if (store.lastLearnedPowerDate == dateStr) {
+        if (store.lastLearnedPowerDate == dateStr && applyToStore) {
             return null
         }
 
         // 1. Fetch compressor electrical energy recording for target date
-        val recordingNode = runCatching {
-            pointTClient.fetchRecording(
-                gatewayId = gatewayId,
-                resourcePath = "/recordings/heatSources/emon/ch/compressor",
-                interval = dateStr
-            )
-        }.getOrNull() ?: return null
-
-        val entries = recordingNode.recording.orEmpty()
-        val totalEnergyKwh = entries.mapNotNull { it.y }.sum()
-        if (totalEnergyKwh < minRecordedEnergyKwh) {
-            return null
+        val totalEnergyKwh = if (pointTClient != null && !gatewayId.isNullOrBlank()) {
+            val recordingNode = runCatching {
+                pointTClient.fetchRecording(
+                    gatewayId = gatewayId,
+                    resourcePath = "/recordings/heatSources/emon/ch/compressor",
+                    interval = dateStr
+                )
+            }.getOrNull()
+            recordingNode?.recording?.mapNotNull { it.y }?.sum() ?: 0.0
+        } else {
+            0.0
         }
 
         // 2. Filter telemetry snapshots for space heating during target date
@@ -197,12 +185,22 @@ class AdaptivePowerObserver(
         }
         val activeHours = max(0.5, activeSeconds / 3600.0)
 
+        val effectiveEnergyKwh = if (totalEnergyKwh >= minRecordedEnergyKwh) {
+            totalEnergyKwh
+        } else {
+            // If eMon is not available (e.g. gateway offline / mock), derive an initial
+            // observation from active runtime using current estimated power scaled to modulation
+            val modFactor = max(0.35, 0.35 + 0.65 * (avgMod / 50.0))
+            (store.estimatedPowerKw * modFactor * activeHours).coerceAtLeast(minRecordedEnergyKwh)
+        }
+
         return observeCycle(
             date = dateStr,
             activeHeatingHours = activeHours,
-            recordedEnergyKwh = totalEnergyKwh,
+            recordedEnergyKwh = effectiveEnergyKwh,
             averageModulationPct = avgMod,
-            store = store
+            store = store,
+            applyToStore = applyToStore
         )
     }
 }
