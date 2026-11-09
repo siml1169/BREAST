@@ -184,7 +184,8 @@ class AutoScheduleDaemon(
             windows = existingTodayWindowsFromState,
             currentMinuteOfDay = currentMinuteOfDay
         )
-        val effectiveNeedsTodaySync = if (isMiddayLocked || isTodayHalfRunReached) {
+        val isTodayLocked = isMiddayLocked || isTodayHalfRunReached
+        val effectiveNeedsTodaySync = if (isTodayLocked) {
             val winDesc = existingTodayWindowsFromState.firstOrNull()?.formatWindow()
             val winNote = winDesc?.let { " ($it)" } ?: ""
             val reason = if (isMiddayLocked) {
@@ -293,7 +294,7 @@ class AutoScheduleDaemon(
 
         val plansToSync = mutableListOf<DailySwitchSchedulePlan>()
         val todayConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
-        val todayPlan = if (todayComplete) {
+        val todayPlan = if (todayComplete && (!isTodayLocked || state.todayWindowSummary == null)) {
             scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)
         } else null
 
@@ -486,24 +487,58 @@ class AutoScheduleDaemon(
             state.appliedScheduleNote
         }
 
-        val effectiveTodaySummary = if (state.lastSyncedTomorrowDate == todayStr) {
-            state.tomorrowWindowSummary ?: effectiveTodayPlan?.let { formatPlanSummary(it) } ?: state.todayWindowSummary
+        val effectiveTodaySummary = if (isTodayLocked) {
+            if (state.lastSyncedTomorrowDate == todayStr) {
+                state.tomorrowWindowSummary ?: state.todayWindowSummary
+            } else {
+                state.todayWindowSummary ?: effectiveTodayPlan?.let { formatPlanSummary(it) }
+            }
         } else {
-            effectiveTodayPlan?.let { formatPlanSummary(it) } ?: state.todayWindowSummary
+            effectiveTodayPlan?.let { formatPlanSummary(it) }
+                ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowWindowSummary
+                else state.todayWindowSummary
         }
 
-        val effectiveTodayPhysics = if (state.lastSyncedTomorrowDate == todayStr) {
-            state.tomorrowPhysicsBreakdown ?: effectiveTodayPlan?.physicsBreakdown ?: state.todayPhysicsBreakdown
+        val effectiveTodayPhysics = if (isTodayLocked) {
+            if (state.lastSyncedTomorrowDate == todayStr) {
+                state.tomorrowPhysicsBreakdown ?: state.todayPhysicsBreakdown
+            } else {
+                state.todayPhysicsBreakdown ?: effectiveTodayPlan?.physicsBreakdown
+            }
         } else {
-            effectiveTodayPlan?.physicsBreakdown ?: state.todayPhysicsBreakdown
+            effectiveTodayPlan?.physicsBreakdown
+                ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowPhysicsBreakdown
+                else state.todayPhysicsBreakdown
         }
 
-        val effectiveTodayDate = if ((effectiveTodayPlan != null && syncSucceeded) || (effectiveTodayPlan != null && forcePush)) {
-            todayStr
-        } else if (state.lastSyncedTomorrowDate == todayStr) {
-            todayStr
+        val effectiveTodayDate = if (isTodayLocked) {
+            if (state.lastSyncedTomorrowDate == todayStr) todayStr
+            else state.lastSyncedTodayDate ?: (if (effectiveTodayPlan != null && syncSucceeded) todayStr else null)
         } else {
-            state.lastSyncedTodayDate
+            if (effectiveTodayPlan != null && syncSucceeded) todayStr
+            else if (state.lastSyncedTomorrowDate == todayStr) todayStr
+            else state.lastSyncedTodayDate
+        }
+
+        val effectiveAppliedSliderTemp = if (isTodayLocked && state.lastAppliedSliderTempC != null) {
+            state.lastAppliedSliderTempC
+        } else {
+            if (syncSucceeded) cfg.targetHeatingTempC else state.lastAppliedSliderTempC
+        }
+        val effectiveAppliedHours = if (isTodayLocked && state.lastAppliedOperationHours != null) {
+            state.lastAppliedOperationHours
+        } else {
+            if (syncSucceeded) cfg.targetOperationHoursPerDay else state.lastAppliedOperationHours
+        }
+        val effectiveAppliedBudget = if (isTodayLocked && state.lastAppliedBudgetEuro != null) {
+            state.lastAppliedBudgetEuro
+        } else {
+            if (syncSucceeded) cfg.dailyBudgetEuro else state.lastAppliedBudgetEuro
+        }
+        val effectiveAppliedPreferenceId = if (isTodayLocked && state.appliedPreferenceId != null) {
+            state.appliedPreferenceId
+        } else {
+            holisticConfig?.preference?.id ?: state.appliedPreferenceId
         }
 
         val effectiveTomorrowSummary = effectiveTomorrowPlan?.let { formatPlanSummary(it) }
@@ -525,9 +560,9 @@ class AutoScheduleDaemon(
         val newState = ScheduleSyncState(
             lastSyncedTodayDate = effectiveTodayDate,
             lastSyncedTomorrowDate = effectiveTomorrowDate,
-            lastAppliedSliderTempC = if (syncSucceeded) cfg.targetHeatingTempC else state.lastAppliedSliderTempC,
-            lastAppliedOperationHours = if (syncSucceeded) cfg.targetOperationHoursPerDay else state.lastAppliedOperationHours,
-            lastAppliedBudgetEuro = if (syncSucceeded) cfg.dailyBudgetEuro else state.lastAppliedBudgetEuro,
+            lastAppliedSliderTempC = effectiveAppliedSliderTemp,
+            lastAppliedOperationHours = effectiveAppliedHours,
+            lastAppliedBudgetEuro = effectiveAppliedBudget,
             lastSyncTimestampIso = nowIso,
             todayWindowSummary = effectiveTodaySummary,
             tomorrowWindowSummary = effectiveTomorrowSummary,
@@ -539,7 +574,7 @@ class AutoScheduleDaemon(
             manualAdjustmentDetected = false,
             manualAdjustmentHint = null,
             lastAppliedSettingsSignature = currentSignature,
-            appliedPreferenceId = holisticConfig?.preference?.id
+            appliedPreferenceId = effectiveAppliedPreferenceId
         )
         stateStore.saveState(newState)
 

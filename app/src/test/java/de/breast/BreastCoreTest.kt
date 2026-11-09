@@ -3279,6 +3279,98 @@ class BreastCoreTest {
     }
 
     @Test
+    fun `AutoScheduleDaemon preserves today schedule summary and settings when midday locked even when settings changed`() = runBlocking {
+        val client = OkHttpClient()
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
+        val berlinZone = ZoneId.of("Europe/Berlin")
+        val today = LocalDate.of(2026, 11, 9)
+        val tomorrow = LocalDate.of(2026, 11, 10)
+
+        val slots = (0 until 48).map { slotIdx: Int ->
+            val date = if (slotIdx < 24) today else tomorrow
+            val h = slotIdx % 24
+            val startSec = date.atStartOfDay(berlinZone).plusHours(h.toLong()).toInstant().epochSecond
+            val eurMwh = if (h in 0..7) 20.0 else 80.0
+            SpotPriceSlot(
+                startEpochSeconds = startSec,
+                endEpochSeconds = startSec + 3600L,
+                spotEurPerMwh = eurMwh,
+                spotNetCtPerKwh = eurMwh / 10.0,
+                totalGrossCtPerKwh = tariff.computeGrossCtPerKwh(eurMwh)
+            )
+        }
+
+        val originalTodaySummary = "00:00 – 11:00  (11.0 h)  •  Efficiency Priority\nEst. 3.00 EUR"
+        val originalTodayPhysics = "Original Physics Breakdown Efficiency"
+        val fakeStore = object : ScheduleStateStore {
+            var state = ScheduleSyncState(
+                lastSyncedTodayDate = "2026-11-09",
+                lastSyncedTomorrowDate = "2026-11-09",
+                todayWindowSummary = originalTodaySummary,
+                todayPhysicsBreakdown = originalTodayPhysics,
+                lastAppliedSliderTempC = 22.0,
+                lastAppliedOperationHours = 11.0,
+                appliedPreferenceId = "efficiency"
+            )
+            override suspend fun loadState(): ScheduleSyncState = state
+            override suspend fun saveState(state: ScheduleSyncState) { this.state = state }
+        }
+
+        val fakeSpotClient = object : SpotPriceClient(client) {
+            override suspend fun fetchDayAheadPrices(
+                startDate: LocalDate,
+                endDate: LocalDate,
+                sources: List<SpotPriceSource>
+            ): List<SpotPriceSlot> = slots
+        }
+
+        val newHolisticConfig = HolisticOptimizationConfig(
+            preference = OptimizationPreference.BUDGET,
+            targetDailyRuntimeHours = 6.0,
+            targetHeatingTempC = 23.0
+        )
+        val scheduler = SwitchProgramScheduler(SwitchScheduleConfig(
+            targetOperationHoursPerDay = 6.0,
+            temperatureSlider = HeatingTemperatureSlider(currentValueC = 23.0)
+        ))
+
+        val daemon = AutoScheduleDaemon(
+            spotClient = fakeSpotClient,
+            pointTClient = PointTApiClient(client, SingleKeyAuthManager(client, object : TokenStore {
+                override suspend fun saveTokens(tokens: OAuthTokens) {}
+                override suspend fun loadTokens(): OAuthTokens? = null
+                override suspend fun clearTokens() {}
+                override suspend fun savePendingPkceVerifier(verifier: String) {}
+                override suspend fun loadPendingPkceVerifier(): String? = null
+            })),
+            scheduler = scheduler,
+            stateStore = fakeStore,
+            dryRun = true,
+            holisticConfig = newHolisticConfig
+        )
+
+        // Run in the evening at 23:00 (midday lock active)
+        val eveningNow = ZonedDateTime.of(2026, 11, 9, 23, 0, 0, 0, berlinZone)
+        val res = daemon.runHourlyCheckCycle(now = eveningNow, forcePush = true)
+
+        // Today must NOT be in syncedDates
+        assertFalse("Today must not be synced when midday lock active", res.syncedDates.contains("2026-11-09"))
+        assertTrue("Tomorrow must be synced", res.syncedDates.contains("2026-11-10"))
+
+        val saved = fakeStore.loadState()
+        // Today's summary and physics MUST be preserved completely!
+        assertEquals("Today's window summary must remain untouched", originalTodaySummary, saved.todayWindowSummary)
+        assertEquals("Today's physics breakdown must remain untouched", originalTodayPhysics, saved.todayPhysicsBreakdown)
+        assertEquals("Today's applied slider temp must remain untouched", 22.0, saved.lastAppliedSliderTempC ?: 0.0, 1e-4)
+        assertEquals("Today's applied operation hours must remain untouched", 11.0, saved.lastAppliedOperationHours ?: 0.0, 1e-4)
+        assertEquals("Today's applied preference must remain untouched", "efficiency", saved.appliedPreferenceId)
+
+        // Tomorrow's summary should reflect the new schedule
+        assertNotNull("Tomorrow's summary must be generated", saved.tomorrowWindowSummary)
+        assertEquals("2026-11-10", saved.lastSyncedTomorrowDate)
+    }
+
+    @Test
     fun `HolisticScheduleOptimizer provides nuanced progressive adjustment when budget is partially binding`() {
         val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 18.50)
         val date = LocalDate.of(2026, 11, 7)

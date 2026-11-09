@@ -1436,6 +1436,9 @@ class MainActivity : ComponentActivity() {
             val appliedSetpoint = syncState.lastAppliedSliderTempC
             val setpointModified = appliedSetpoint != null && Math.abs(currentSetpoint - appliedSetpoint) >= 0.1
 
+            val nowBerlin = java.time.ZonedDateTime.now(SpotPriceClient.BERLIN_ZONE)
+            val isMiddayLocked = SwitchProgramScheduler.isMiddayLocked(nowBerlin.hour)
+
             if (syncState.manualAdjustmentDetected) {
                 manualAdjustmentBanner.visibility = View.VISIBLE
                 val hint = syncState.manualAdjustmentHint ?: i18n.manualAdjustmentDetected
@@ -1443,8 +1446,13 @@ class MainActivity : ComponentActivity() {
                 lastSyncSubText.text = "${String.format(i18n.lastSyncPrefix, lastSyncFormatted)}  •  ⚠ $hint"
             } else if (setpointModified && (syncState.lastSyncedTodayDate != null || syncState.lastSyncedTomorrowDate != null)) {
                 manualAdjustmentBanner.visibility = View.VISIBLE
-                manualAdjustmentBanner.text = "ℹ Schedule manually modified (Target: ${currentSetpoint}°C vs applied ${appliedSetpoint}°C). Press 'Sync' again twice to overwrite."
-                lastSyncSubText.text = "Last schedule sync: $lastSyncFormatted  •  Target modified (${appliedSetpoint}°C -> ${currentSetpoint}°C)"
+                if (isMiddayLocked) {
+                    manualAdjustmentBanner.text = "ℹ Midday lock active (>= 12:00 CET): Today's running schedule is locked (${appliedSetpoint}°C). Target ${currentSetpoint}°C applies to tomorrow. Press 'Sync' to update tomorrow."
+                    lastSyncSubText.text = "Today locked (${appliedSetpoint}°C)  •  Tomorrow target: ${currentSetpoint}°C"
+                } else {
+                    manualAdjustmentBanner.text = "ℹ Schedule manually modified (Target: ${currentSetpoint}°C vs applied ${appliedSetpoint}°C). Press 'Sync' again twice to overwrite."
+                    lastSyncSubText.text = "Last schedule sync: $lastSyncFormatted  •  Target modified (${appliedSetpoint}°C -> ${currentSetpoint}°C)"
+                }
             } else {
                 if (overwriteConfirmTaps == 0) {
                     manualAdjustmentBanner.visibility = View.GONE
@@ -1981,11 +1989,15 @@ class MainActivity : ComponentActivity() {
             val cfg = settingsStore.buildScheduleConfig(averageOutdoorTempC = outdoorTempC)
             val scheduler = SwitchProgramScheduler(cfg)
 
+            val nowBerlin = java.time.ZonedDateTime.now(SpotPriceClient.BERLIN_ZONE)
+            val isMiddayLocked = SwitchProgramScheduler.isMiddayLocked(nowBerlin.hour)
+
             if (forcePush) {
+                val currentState = stateStore.loadState()
                 stateStore.saveState(
-                    stateStore.loadState().copy(
-                        lastAppliedSliderTempC = null,
-                        lastSyncedTodayDate = null,
+                    currentState.copy(
+                        lastAppliedSliderTempC = if (isMiddayLocked) currentState.lastAppliedSliderTempC else null,
+                        lastSyncedTodayDate = if (isMiddayLocked) currentState.lastSyncedTodayDate else null,
                         lastSyncedTomorrowDate = null,
                         lastAppliedSettingsSignature = null,
                         manualAdjustmentDetected = false,
