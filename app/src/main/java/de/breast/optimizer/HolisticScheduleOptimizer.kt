@@ -953,9 +953,9 @@ class HolisticScheduleOptimizer(
                 val dhwCostEuro = dhwElecKwh * (avgGrossInWin / 100.0)
 
                 WindowEvalResult(
-                    windowCostEuro = euroCost,
+                    windowCostEuro = euroCost + dhwCostEuro,
                     dailyCostEuro = euroCost + setbackCostEuro + dhwCostEuro,
-                    windowElectricityKwh = clampedElecKwh,
+                    windowElectricityKwh = clampedElecKwh + dhwElecKwh,
                     dailyElectricityKwh = clampedElecKwh + setbackElecKwh + dhwElecKwh,
                     avgPowerKw = avgPowerKw,
                     modulationPct = physicalModPct,

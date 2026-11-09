@@ -277,6 +277,8 @@ class ControlUnitSimulator(
                 if (slotGrossCtPerKwh.isNotEmpty()) slotGrossCtPerKwh.average() else 30.0
             }
             dhwCostEuro = dhwElecKwh * (avgWindowPrice / 100.0)
+            windowElectricityKwh += dhwElecKwh
+            windowCostEuro += dhwCostEuro
             totalElectricityKwh += dhwElecKwh
             totalCostEuro += dhwCostEuro
         } else {

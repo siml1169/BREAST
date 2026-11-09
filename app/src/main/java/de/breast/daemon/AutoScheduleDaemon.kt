@@ -436,10 +436,12 @@ class AutoScheduleDaemon(
             }
 
             val modInfo = if (plan.estimatedDhwElectricityKwh > 0.05) {
+                val chKwh = kotlin.math.max(0.0, plan.estimatedElectricityKwh - plan.estimatedDhwElectricityKwh)
                 String.format(
                     java.util.Locale.US,
-                    " (%.1f kWh CH + %.1f kWh DHW • %.1f kWh 24h @ ~%.0f%% mod)",
+                    " (%.1f kWh win: %.1f CH + %.1f DHW • %.1f kWh 24h @ ~%.0f%% mod)",
                     plan.estimatedElectricityKwh,
+                    chKwh,
                     plan.estimatedDhwElectricityKwh,
                     plan.estimatedDailyTotalElectricityKwh,
                     plan.estimatedModulationPct
