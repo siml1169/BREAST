@@ -107,8 +107,8 @@ class ControlUnitSimulator(
             3.5
         }
         val compKw = if (estimatedElectricalPowerKw != null && estimatedElectricalPowerKw > 0.1) {
-            val pCompRef = max(0.20, estimatedElectricalPowerKw - parasiticBaselinePowerKw)
-            val modFactor = 0.35 + 0.65 * (modulationPct / 50.0)
+            val pCompRef = max(0.15, estimatedElectricalPowerKw - parasiticBaselinePowerKw)
+            val modFactor = max(0.35, 0.35 + 0.65 * (modulationPct / 50.0))
             pCompRef * modFactor
         } else {
             val thermalKw = (modulationPct / 100.0) * nominalThermalKw
@@ -279,8 +279,6 @@ class ControlUnitSimulator(
             dhwCostEuro = dhwElecKwh * (avgWindowPrice / 100.0)
             totalElectricityKwh += dhwElecKwh
             totalCostEuro += dhwCostEuro
-            windowElectricityKwh += dhwElecKwh
-            windowCostEuro += dhwCostEuro
         } else {
             dhwCostEuro = 0.0
         }

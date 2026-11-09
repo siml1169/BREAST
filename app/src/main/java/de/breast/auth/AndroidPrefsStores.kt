@@ -468,7 +468,9 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
 
     fun buildHolisticOptimizationConfig(
         targetHeatingTempC: Double = sliderTempC,
-        liveStartingReturnTempC: Double? = null
+        liveStartingReturnTempC: Double? = null,
+        liveOutdoorTempC: Double? = null,
+        liveDhwTankTempC: Double? = null
     ): HolisticOptimizationConfig {
         return HolisticOptimizationConfig(
             targetHeatingTempC = targetHeatingTempC,
@@ -486,6 +488,8 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             dailyBudgetEuro = dailyBudgetEuro,
             preference = OptimizationPreference.fromId(optimizationPreference),
             liveStartingReturnTempC = liveStartingReturnTempC,
+            liveOutdoorTempC = liveOutdoorTempC,
+            liveDhwTankTempC = liveDhwTankTempC,
             adaptiveCycleCount = 0,
             dhwModelingEnabled = dhwModelingEnabled,
             dhwDailyEnergyKwh = dhwDailyEnergyKwh,

@@ -67,7 +67,8 @@ class AdaptivePowerObserver(
         recordedEnergyKwh: Double,
         averageModulationPct: Double,
         store: PowerParametersStore,
-        applyToStore: Boolean = true
+        applyToStore: Boolean = true,
+        forceUpdate: Boolean = false
     ): PowerObservationResult? {
         if (activeHeatingHours < minActiveHours || recordedEnergyKwh < minRecordedEnergyKwh || averageModulationPct < minAverageModulationPct) {
             return null
@@ -92,7 +93,7 @@ class AdaptivePowerObserver(
         val isAlreadyIncorporated = (store.lastLearnedPowerDate == date)
         val targetCycleCount = if (isAlreadyIncorporated) store.learnedPowerCycleCount else store.learnedPowerCycleCount + 1
 
-        if (applyToStore && !isAlreadyIncorporated) {
+        if (applyToStore && (!isAlreadyIncorporated || forceUpdate)) {
             store.estimatedPowerKw = newTotalPower
             store.learnedPowerCycleCount = targetCycleCount
             store.lastLearnedPowerDate = date
@@ -138,10 +139,11 @@ class AdaptivePowerObserver(
         pointTClient: PointTApiClient? = null,
         gatewayId: String? = null,
         store: PowerParametersStore,
-        applyToStore: Boolean = true
+        applyToStore: Boolean = true,
+        forceRecalibrate: Boolean = false
     ): PowerObservationResult? {
         val dateStr = targetDate.toString()
-        if (store.lastLearnedPowerDate == dateStr && applyToStore) {
+        if (store.lastLearnedPowerDate == dateStr && applyToStore && !forceRecalibrate) {
             return null
         }
 
@@ -154,7 +156,10 @@ class AdaptivePowerObserver(
                     interval = dateStr
                 )
             }.getOrNull()
-            recordingNode?.recording?.mapNotNull { it.y }?.sum() ?: 0.0
+            recordingNode?.recording
+                ?.filter { (it.c ?: 1) > 0 }
+                ?.mapNotNull { it.y }
+                ?.sum() ?: 0.0
         } else {
             0.0
         }
@@ -201,7 +206,8 @@ class AdaptivePowerObserver(
             recordedEnergyKwh = effectiveEnergyKwh,
             averageModulationPct = avgMod,
             store = store,
-            applyToStore = applyToStore
+            applyToStore = applyToStore,
+            forceUpdate = forceRecalibrate
         )
     }
 }

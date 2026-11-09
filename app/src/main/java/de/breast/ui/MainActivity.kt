@@ -1589,7 +1589,11 @@ class MainActivity : ComponentActivity() {
                 val cfg = settingsStore.buildScheduleConfig(averageOutdoorTempC = recentSnap?.outdoorTempC)
                 val scheduler = SwitchProgramScheduler(cfg)
                 val holisticConfig = if (settingsStore.holisticOptimizationEnabled) {
-                    settingsStore.buildHolisticOptimizationConfig(liveStartingReturnTempC = recentSnap?.returnTempC)
+                    settingsStore.buildHolisticOptimizationConfig(
+                        liveStartingReturnTempC = recentSnap?.returnTempC,
+                        liveOutdoorTempC = recentSnap?.outdoorTempC,
+                        liveDhwTankTempC = recentSnap?.dhwTempC
+                    )
                 } else null
 
                 val daemon = AutoScheduleDaemon(
@@ -1991,7 +1995,11 @@ class MainActivity : ComponentActivity() {
             }
 
             val holisticConfig = if (settingsStore.holisticOptimizationEnabled) {
-                settingsStore.buildHolisticOptimizationConfig(liveStartingReturnTempC = recentSnap?.returnTempC)
+                settingsStore.buildHolisticOptimizationConfig(
+                    liveStartingReturnTempC = recentSnap?.returnTempC,
+                    liveOutdoorTempC = recentSnap?.outdoorTempC,
+                    liveDhwTankTempC = recentSnap?.dhwTempC
+                )
             } else null
 
             val daemon = AutoScheduleDaemon(

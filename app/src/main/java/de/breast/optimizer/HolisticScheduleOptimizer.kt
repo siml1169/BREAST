@@ -125,6 +125,8 @@ data class HolisticOptimizationConfig(
     val grossBaseFloorCtPerKwh: Double = 25.40,
     val coolingRateKPerHour: Double = 0.20,
     val liveStartingReturnTempC: Double? = null,
+    val liveOutdoorTempC: Double? = null,
+    val liveDhwTankTempC: Double? = null,
     val adaptiveCycleCount: Int = 0,
     val dhwModelingEnabled: Boolean = false,
     val dhwDailyEnergyKwh: Double = 1.90, // ~1.9 kWh ground-truth per DHW cycle
@@ -170,7 +172,9 @@ private data class WindowEvalResult(
     val windowElectricityKwh: Double,
     val dailyElectricityKwh: Double,
     val avgPowerKw: Double,
-    val modulationPct: Double
+    val modulationPct: Double,
+    val dhwElectricityKwh: Double = 0.0,
+    val dhwCostEuro: Double = 0.0
 ) {
     val euroCost: Double get() = dailyCostEuro
     val electricityKwh: Double get() = windowElectricityKwh
@@ -272,6 +276,25 @@ class HolisticScheduleOptimizer(
         if (scoredSlots.isEmpty()) return null
 
         // 3. Closed-Loop Digital Twin & Dynamic Thermal Energy Requirement
+        val nowZone = java.time.ZonedDateTime.now(BERLIN_ZONE)
+        val todayDate = nowZone.toLocalDate()
+
+        // Harmonize early forecast hours with live outdoor sensor if available
+        val effectiveHourlyTemps = if (date == todayDate && config.liveOutdoorTempC != null && hourlyTemps.isNotEmpty()) {
+            val liveT = config.liveOutdoorTempC
+            val forecastFirst = hourlyTemps.first()
+            val offset = liveT - forecastFirst
+            hourlyTemps.mapIndexed { h, t ->
+                val blendWeight = max(0.0, 1.0 - (h / 12.0))
+                t + offset * blendWeight
+            }.toDoubleArray()
+        } else {
+            hourlyTemps
+        }
+
+        val isDhwSatisfied = config.liveDhwTankTempC != null && config.liveDhwTankTempC >= 44.0
+        val effectiveDhwDailyEnergyKwh = if (config.dhwModelingEnabled && !isDhwSatisfied) config.dhwDailyEnergyKwh else 0.0
+
         val setbackContinuousPowerKw = config.customMeasuredParasiticLoadKw ?: (config.circulationPumpKw + 0.005)
         val controlSimulator = if (config.useEmpiricalGroundTruthModulation) {
             ControlUnitSimulator(
@@ -290,7 +313,7 @@ class HolisticScheduleOptimizer(
                 standbyPowerKw = setbackContinuousPowerKw,
                 parasiticBaselinePowerKw = config.customMeasuredParasiticLoadKw ?: config.parasiticBaselinePowerKw,
                 baselineInternalGainsKw = config.baselineInternalGainsKw,
-                dhwDailyElectricityKwh = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0,
+                dhwDailyElectricityKwh = effectiveDhwDailyEnergyKwh,
                 dhwCyclePowerKw = config.dhwAveragePowerKw,
                 minElecPowerKw = config.minElecPowerKw,
                 maxElecPowerKw = config.maxElecPowerKw,
@@ -299,8 +322,6 @@ class HolisticScheduleOptimizer(
         } else null
 
         val projectedMidnightReturn: Double? = if (config.liveStartingReturnTempC != null) {
-            val nowZone = java.time.ZonedDateTime.now(BERLIN_ZONE)
-            val todayDate = nowZone.toLocalDate()
             if (date == todayDate) {
                 config.liveStartingReturnTempC
             } else if (date == todayDate.plusDays(1)) {
@@ -308,7 +329,7 @@ class HolisticScheduleOptimizer(
                 val currentHour = nowZone.hour + nowZone.minute / 60.0
                 val remainingHours = max(0.0, 24.0 - currentHour)
                 val decayK = remainingHours * config.coolingRateKPerHour * 0.35
-                val setbackFloor = controlSimulator?.estimateTargetReturnTempC(hourlyTemps.firstOrNull() ?: 8.0, 17.0) ?: 21.0
+                val setbackFloor = controlSimulator?.estimateTargetReturnTempC(effectiveHourlyTemps.firstOrNull() ?: 8.0, 17.0) ?: 21.0
                 max(setbackFloor, config.liveStartingReturnTempC - decayK)
             } else {
                 null
@@ -317,14 +338,20 @@ class HolisticScheduleOptimizer(
             null
         }
 
+        val startingOutdoorForReturn = if (date == todayDate && config.liveOutdoorTempC != null) {
+            config.liveOutdoorTempC
+        } else {
+            effectiveHourlyTemps.firstOrNull() ?: 8.0
+        }
+
         val targetComfortReturn = controlSimulator?.estimateTargetReturnTempC(
-            outdoorTempC = hourlyTemps.firstOrNull() ?: 8.0,
+            outdoorTempC = startingOutdoorForReturn,
             targetRoomTempC = config.targetHeatingTempC
-        ) ?: ((config.targetHeatingTempC + 0.65 * (20.0 - (hourlyTemps.firstOrNull() ?: 8.0)) - 4.5).coerceIn(16.0, 45.0))
+        ) ?: ((config.targetHeatingTempC + 0.65 * (20.0 - startingOutdoorForReturn) - 4.5).coerceIn(16.0, 45.0))
 
         val dailyEnergyNeedKwh = energyModel.calculateDailyThermalEnergyNeedKwh(
             targetRoomTempC = config.targetHeatingTempC,
-            hourlyOutdoorTempsC = hourlyTemps.toList(),
+            hourlyOutdoorTempsC = effectiveHourlyTemps.toList(),
             scheduledComfortHours = config.targetDailyRuntimeHours,
             coolingRateKPerHour = config.coolingRateKPerHour,
             liveStartingReturnTempC = projectedMidnightReturn ?: config.liveStartingReturnTempC,
@@ -768,7 +795,11 @@ class HolisticScheduleOptimizer(
             appendLine(String.format(java.util.Locale.US, "   • Thermodynamic Reciprocal COP: %.2f", cop))
             appendLine(String.format(java.util.Locale.US, "   • Bosch Inverter Speed: ~%.0f%% modulation", finalMetrics.modulationPct))
             appendLine(String.format(java.util.Locale.US, "   • Active Electrical Draw: %.2f kW", finalMetrics.avgPowerKw))
-            val dhwElec = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0
+            val dhwElec = finalMetrics.dhwElectricityKwh
+            val dhwCost = finalMetrics.dhwCostEuro
+            val spaceHeatingKwh = finalMetrics.windowElectricityKwh
+            val spaceHeatingCost = finalMetrics.windowCostEuro
+
             val isDisinfectionDay = date.dayOfWeek == java.time.DayOfWeek.SUNDAY ||
                 (config.thermalDisinfectionWeeklyDay.equals("Su", ignoreCase = true) && date.dayOfWeek == java.time.DayOfWeek.SUNDAY)
             val disElecKwh = if (isDisinfectionDay && config.thermalDisinfectionEnabled) config.thermalDisinfectionEnergyKwh else 0.0
@@ -776,13 +807,11 @@ class HolisticScheduleOptimizer(
             val disPrice = if (disSlot in slotGrossCt.indices) slotGrossCt[disSlot] else if (slotGrossCt.isNotEmpty()) slotGrossCt.average() else 30.0
             val disCostEuro = if (disElecKwh > 0.0) disElecKwh * (disPrice / 100.0) else 0.0
 
-            val spaceHeatingKwh = kotlin.math.max(0.0, finalMetrics.windowElectricityKwh - dhwElec)
-            val dhwCost = if (config.dhwModelingEnabled) dhwElec * (avgGross / 100.0) else 0.0
-            val spaceHeatingCost = kotlin.math.max(0.0, finalMetrics.windowCostEuro - dhwCost)
-
             appendLine(String.format(java.util.Locale.US, "   • Active Space Heating Window: %.1f kWh (%.1fh @ %.2f kW)", spaceHeatingKwh, hours, finalMetrics.avgPowerKw))
-            if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
-                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW Model): +%.1f kWh (+%.2f € @ window rate)", config.dhwDailyEnergyKwh, dhwCost))
+            if (dhwElec > 0.0) {
+                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW Model): +%.1f kWh (+%.2f € @ window rate)", dhwElec, dhwCost))
+            } else if (config.dhwModelingEnabled) {
+                appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW): 0.0 kWh (Storage temperature %.1f°C satisfied)", config.liveDhwTankTempC ?: 56.5))
             }
             if (disElecKwh > 0.0) {
                 appendLine(String.format(java.util.Locale.US, "   • Thermal Disinfection (Sunday 12:00 eHeater): +%.1f kWh (+%.2f € @ 12:00 spot rate)", disElecKwh, disCostEuro))
@@ -793,7 +822,7 @@ class HolisticScheduleOptimizer(
             appendLine("4. Tariff & Cost:")
             appendLine(String.format(java.util.Locale.US, "   • EPEX Spot Average (Window): %.1f ct/kWh gross (%.1f ct/kWh net)", avgGross, avgNet))
             appendLine(String.format(java.util.Locale.US, "   • Space Heating Window Cost: %.2f €", spaceHeatingCost))
-            if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
+            if (dhwCost > 0.0) {
                 appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water Cost: +%.2f €", dhwCost))
             }
             if (disElecKwh > 0.0) {
@@ -845,6 +874,8 @@ class HolisticScheduleOptimizer(
             estimatedSetbackCostEuro = setbackCostEuro,
             estimatedAveragePowerKw = finalMetrics.avgPowerKw,
             estimatedModulationPct = finalMetrics.modulationPct,
+            estimatedDhwElectricityKwh = finalMetrics.dhwElectricityKwh,
+            estimatedDhwCostEuro = finalMetrics.dhwCostEuro,
             physicsBreakdown = breakdown
         )
     }
@@ -888,7 +919,9 @@ class HolisticScheduleOptimizer(
                     windowElectricityKwh = sim.windowElectricityKwh,
                     dailyElectricityKwh = sim.totalElectricityKwh,
                     avgPowerKw = sim.averageActivePowerKw,
-                    modulationPct = sim.averageModulationPct
+                    modulationPct = sim.averageModulationPct,
+                    dhwElectricityKwh = sim.dhwElectricityKwh,
+                    dhwCostEuro = sim.dhwCostEuro
                 )
             } else {
                 val targetThermalKw = dailyEnergyNeedKwh / durH
@@ -920,12 +953,14 @@ class HolisticScheduleOptimizer(
                 val dhwCostEuro = dhwElecKwh * (avgGrossInWin / 100.0)
 
                 WindowEvalResult(
-                    windowCostEuro = euroCost + dhwCostEuro,
+                    windowCostEuro = euroCost,
                     dailyCostEuro = euroCost + setbackCostEuro + dhwCostEuro,
-                    windowElectricityKwh = clampedElecKwh + dhwElecKwh,
+                    windowElectricityKwh = clampedElecKwh,
                     dailyElectricityKwh = clampedElecKwh + setbackElecKwh + dhwElecKwh,
                     avgPowerKw = avgPowerKw,
-                    modulationPct = physicalModPct
+                    modulationPct = physicalModPct,
+                    dhwElectricityKwh = dhwElecKwh,
+                    dhwCostEuro = dhwCostEuro
                 )
             }
         } else {
@@ -942,7 +977,9 @@ class HolisticScheduleOptimizer(
                 windowElectricityKwh = kwh,
                 dailyElectricityKwh = kwh + setbackElecKwh,
                 avgPowerKw = config.estimatedPowerKw,
-                modulationPct = 0.0
+                modulationPct = 0.0,
+                dhwElectricityKwh = 0.0,
+                dhwCostEuro = 0.0
             )
         }
     }

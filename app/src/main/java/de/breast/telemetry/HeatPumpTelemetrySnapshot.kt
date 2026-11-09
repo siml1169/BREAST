@@ -15,7 +15,8 @@ data class HeatPumpTelemetrySnapshot(
     val demand: String? = null,
     val chStatus: String? = null,
     val spotPriceGrossCt: Double? = null,
-    val spotPriceNetCt: Double? = null
+    val spotPriceNetCt: Double? = null,
+    val dhwTempC: Double? = null
 ) {
     val deltaTempC: Double?
         get() = if (supplyTempC != null && returnTempC != null) supplyTempC - returnTempC else null

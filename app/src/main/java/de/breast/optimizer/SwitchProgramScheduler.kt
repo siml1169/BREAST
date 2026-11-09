@@ -152,6 +152,8 @@ data class DailySwitchSchedulePlan(
     val estimatedSetbackCostEuro: Double = 0.0,
     val estimatedAveragePowerKw: Double = 0.0,
     val estimatedModulationPct: Double = 0.0,
+    val estimatedDhwElectricityKwh: Double = 0.0,
+    val estimatedDhwCostEuro: Double = 0.0,
     val physicsBreakdown: String? = null
 )
 
@@ -787,7 +789,8 @@ class SwitchProgramScheduler(
         dhwId: String = "dhw1",
         dryRun: Boolean = true,
         currentMinuteOfDay: Int? = null,
-        todayDayCode: String? = null
+        todayDayCode: String? = null,
+        forcePush: Boolean = false
     ): SyncDetailedResult {
         val logs = mutableListOf<String>()
         val prefix = if (dryRun) "[DRY-RUN]" else "[LIVE-SYNC]"

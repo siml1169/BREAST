@@ -40,7 +40,7 @@ class SqliteTelemetryStore(
 
     companion object {
         const val DB_NAME = "breast_telemetry.db"
-        const val DB_VERSION = 1
+        const val DB_VERSION = 2
 
         const val TABLE_SNAPSHOTS = "telemetry_snapshots"
         const val COL_ID = "id"
@@ -56,6 +56,7 @@ class SqliteTelemetryStore(
         const val COL_CH_STATUS = "ch_status"
         const val COL_SPOT_GROSS_CT = "spot_gross_ct"
         const val COL_SPOT_NET_CT = "spot_net_ct"
+        const val COL_DHW_TEMP = "dhw_temp"
     }
 
     private val json = Json {
@@ -80,7 +81,8 @@ class SqliteTelemetryStore(
                 $COL_DEMAND TEXT,
                 $COL_CH_STATUS TEXT,
                 $COL_SPOT_GROSS_CT REAL,
-                $COL_SPOT_NET_CT REAL
+                $COL_SPOT_NET_CT REAL,
+                $COL_DHW_TEMP REAL
             )
             """.trimIndent()
         )
@@ -90,7 +92,11 @@ class SqliteTelemetryStore(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Migration logic for future schema updates
+        if (oldVersion < 2) {
+            runCatching {
+                db.execSQL("ALTER TABLE $TABLE_SNAPSHOTS ADD COLUMN $COL_DHW_TEMP REAL")
+            }
+        }
     }
 
     override suspend fun recordSnapshot(snapshot: HeatPumpTelemetrySnapshot) = withContext(Dispatchers.IO) {
@@ -107,6 +113,7 @@ class SqliteTelemetryStore(
             snapshot.chStatus?.let { put(COL_CH_STATUS, it) } ?: putNull(COL_CH_STATUS)
             snapshot.spotPriceGrossCt?.let { put(COL_SPOT_GROSS_CT, it) } ?: putNull(COL_SPOT_GROSS_CT)
             snapshot.spotPriceNetCt?.let { put(COL_SPOT_NET_CT, it) } ?: putNull(COL_SPOT_NET_CT)
+            snapshot.dhwTempC?.let { put(COL_DHW_TEMP, it) } ?: putNull(COL_DHW_TEMP)
         }
         writableDatabase.insert(TABLE_SNAPSHOTS, null, values)
         Unit
@@ -250,7 +257,8 @@ class SqliteTelemetryStore(
             demand = getStringOrNull(COL_DEMAND),
             chStatus = getStringOrNull(COL_CH_STATUS),
             spotPriceGrossCt = getDoubleOrNull(COL_SPOT_GROSS_CT),
-            spotPriceNetCt = getDoubleOrNull(COL_SPOT_NET_CT)
+            spotPriceNetCt = getDoubleOrNull(COL_SPOT_NET_CT),
+            dhwTempC = cursor.getColumnIndex(COL_DHW_TEMP).takeIf { it >= 0 }?.let { if (cursor.isNull(it)) null else cursor.getDouble(it) }
         )
     }
 }

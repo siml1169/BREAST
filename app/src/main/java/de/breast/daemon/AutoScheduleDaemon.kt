@@ -113,9 +113,14 @@ class AutoScheduleDaemon(
         // 1. Online Adaptive Thermal Observer: Calibrate Hbld and cooldown rate from recent nocturnal setback
         var effectiveHolisticConfig = holisticConfig
         var liveReturnTempC: Double? = null
+        var liveOutdoorTempC: Double? = null
+        var liveDhwTankTempC: Double? = null
         if (telemetryStore != null && settingsStore != null) {
             val snapshots = telemetryStore.getRecentSnapshots(limit = 2500)
-            liveReturnTempC = snapshots.lastOrNull()?.returnTempC
+            val latestSnap = snapshots.lastOrNull()
+            liveReturnTempC = latestSnap?.returnTempC
+            liveOutdoorTempC = latestSnap?.outdoorTempC
+            liveDhwTankTempC = latestSnap?.dhwTempC
             val observer = de.breast.telemetry.AdaptiveThermalObserver(
                 latitude = settingsStore.weatherLatitude,
                 longitude = settingsStore.weatherLongitude
@@ -124,7 +129,11 @@ class AutoScheduleDaemon(
             if (calib != null) {
                 logs.add("[$nowIso] ${calib.logMessage}")
             }
-            effectiveHolisticConfig = settingsStore.buildHolisticOptimizationConfig()
+            effectiveHolisticConfig = settingsStore.buildHolisticOptimizationConfig(
+                liveStartingReturnTempC = liveReturnTempC,
+                liveOutdoorTempC = liveOutdoorTempC,
+                liveDhwTankTempC = liveDhwTankTempC
+            )
         }
 
         val state = stateStore.loadState()
@@ -247,17 +256,28 @@ class AutoScheduleDaemon(
         if (resolvedGatewayId != null && !dryRun && store != null && currentSettingsStore != null) {
             runCatching {
                 val powerObserver = de.breast.telemetry.AdaptivePowerObserver()
-                val targetLearnDate = today.minusDays(1)
-                val powerCalib = powerObserver.performOnlineCalibration(
-                    targetDate = targetLearnDate,
-                    snapshots = store.getRecentSnapshots(limit = 2500),
-                    pointTClient = pointTClient,
-                    gatewayId = resolvedGatewayId,
-                    store = currentSettingsStore
-                )
-                if (powerCalib != null) {
-                    logs.add("[$nowIso] ${powerCalib.logMessage}")
-                    effectiveHolisticConfig = currentSettingsStore.buildHolisticOptimizationConfig()
+                val candidateDates = mutableListOf(today.minusDays(1))
+                val nowMinutes = now.hour * 60 + now.minute
+                if (nowMinutes >= 720) { // Afternoon / evening: today's morning heating cycle is completed
+                    candidateDates.add(today)
+                }
+                for (targetLearnDate in candidateDates) {
+                    val powerCalib = powerObserver.performOnlineCalibration(
+                        targetDate = targetLearnDate,
+                        snapshots = store.getRecentSnapshots(limit = 2500),
+                        pointTClient = pointTClient,
+                        gatewayId = resolvedGatewayId,
+                        store = currentSettingsStore,
+                        forceRecalibrate = forcePush
+                    )
+                    if (powerCalib != null) {
+                        logs.add("[$nowIso] ${powerCalib.logMessage}")
+                        effectiveHolisticConfig = currentSettingsStore.buildHolisticOptimizationConfig(
+                            liveStartingReturnTempC = liveReturnTempC,
+                            liveOutdoorTempC = liveOutdoorTempC,
+                            liveDhwTankTempC = liveDhwTankTempC
+                        )
+                    }
                 }
             }.onFailure { err ->
                 logs.add("[$nowIso] Adaptive power calibration notice: ${err.message}")
@@ -272,14 +292,21 @@ class AutoScheduleDaemon(
         } ?: emptyList()
 
         val plansToSync = mutableListOf<DailySwitchSchedulePlan>()
-        if (todayComplete && effectiveNeedsTodaySync) {
-            val todayConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
-            scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)?.let { plansToSync.add(it) }
+        val todayConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
+        val todayPlan = if (todayComplete) {
+            scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)
+        } else null
+
+        if (todayPlan != null && effectiveNeedsTodaySync) {
+            plansToSync.add(todayPlan)
         }
+
+        var tomorrowPlan: DailySwitchSchedulePlan? = null
         if (tomorrowComplete && (tomorrowPricesReady || forcePush || needsTomorrowSync)) {
             val tomorrowConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
-            scheduler.buildDailySwitchSchedule(tomorrow, spotSlots, weatherForecast, tomorrowConfig)?.let {
-                plansToSync.add(it)
+            tomorrowPlan = scheduler.buildDailySwitchSchedule(tomorrow, spotSlots, weatherForecast, tomorrowConfig)
+            if (tomorrowPlan != null) {
+                plansToSync.add(tomorrowPlan)
                 val priceNote = if (isDynamic) "Tomorrow's ($tomorrowStr) Day-Ahead prices published!" else "Tomorrow's ($tomorrowStr) ${spotClient.tariffConfig.pricingModel.displayName} schedule compiled!"
                 logs.add("[$nowIso] $priceNote Computed holistic schedule window.")
             }
@@ -369,7 +396,8 @@ class AutoScheduleDaemon(
             plans = plansToSync,
             dryRun = isDryRunEffective,
             currentMinuteOfDay = currentMinuteOfDay,
-            todayDayCode = todayDayCode
+            todayDayCode = todayDayCode,
+            forcePush = forcePush
         )
         logs.addAll(syncResult.logs)
 
@@ -407,7 +435,16 @@ class AutoScheduleDaemon(
                 String.format(java.util.Locale.US, "Est. %.2f €", plan.estimatedDailyCostEuro)
             }
 
-            val modInfo = if (plan.estimatedDailyTotalElectricityKwh > plan.estimatedElectricityKwh + 0.05) {
+            val modInfo = if (plan.estimatedDhwElectricityKwh > 0.05) {
+                String.format(
+                    java.util.Locale.US,
+                    " (%.1f kWh CH + %.1f kWh DHW • %.1f kWh 24h @ ~%.0f%% mod)",
+                    plan.estimatedElectricityKwh,
+                    plan.estimatedDhwElectricityKwh,
+                    plan.estimatedDailyTotalElectricityKwh,
+                    plan.estimatedModulationPct
+                )
+            } else if (plan.estimatedDailyTotalElectricityKwh > plan.estimatedElectricityKwh + 0.05) {
                 String.format(
                     java.util.Locale.US,
                     " (%.1f kWh win • %.1f kWh 24h @ ~%.0f%% mod)",
@@ -430,8 +467,8 @@ class AutoScheduleDaemon(
             )
         }
 
-        val todayPlan = plansToSync.firstOrNull { it.date == todayStr }
-        val tomorrowPlan = plansToSync.firstOrNull { it.date == tomorrowStr }
+        val effectiveTodayPlan = todayPlan ?: plansToSync.firstOrNull { it.date == todayStr }
+        val effectiveTomorrowPlan = tomorrowPlan ?: plansToSync.firstOrNull { it.date == tomorrowStr }
 
         val updatedSignatures = if (syncSucceeded) {
             state.appliedScheduleSignatures + syncResult.appliedHcSignatures
@@ -447,15 +484,19 @@ class AutoScheduleDaemon(
             state.appliedScheduleNote
         }
 
-        val effectiveTodaySummary = todayPlan?.let { formatPlanSummary(it) }
-            ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowWindowSummary
-            else state.todayWindowSummary
+        val effectiveTodaySummary = if (state.lastSyncedTomorrowDate == todayStr) {
+            state.tomorrowWindowSummary ?: effectiveTodayPlan?.let { formatPlanSummary(it) } ?: state.todayWindowSummary
+        } else {
+            effectiveTodayPlan?.let { formatPlanSummary(it) } ?: state.todayWindowSummary
+        }
 
-        val effectiveTodayPhysics = todayPlan?.physicsBreakdown
-            ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowPhysicsBreakdown
-            else state.todayPhysicsBreakdown
+        val effectiveTodayPhysics = if (state.lastSyncedTomorrowDate == todayStr) {
+            state.tomorrowPhysicsBreakdown ?: effectiveTodayPlan?.physicsBreakdown ?: state.todayPhysicsBreakdown
+        } else {
+            effectiveTodayPlan?.physicsBreakdown ?: state.todayPhysicsBreakdown
+        }
 
-        val effectiveTodayDate = if (todayPlan != null && syncSucceeded) {
+        val effectiveTodayDate = if ((effectiveTodayPlan != null && syncSucceeded) || (effectiveTodayPlan != null && forcePush)) {
             todayStr
         } else if (state.lastSyncedTomorrowDate == todayStr) {
             todayStr
@@ -463,15 +504,15 @@ class AutoScheduleDaemon(
             state.lastSyncedTodayDate
         }
 
-        val effectiveTomorrowSummary = tomorrowPlan?.let { formatPlanSummary(it) }
+        val effectiveTomorrowSummary = effectiveTomorrowPlan?.let { formatPlanSummary(it) }
             ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowWindowSummary
             else null
 
-        val effectiveTomorrowPhysics = tomorrowPlan?.physicsBreakdown
+        val effectiveTomorrowPhysics = effectiveTomorrowPlan?.physicsBreakdown
             ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowPhysicsBreakdown
             else null
 
-        val effectiveTomorrowDate = if (tomorrowPlan != null && syncSucceeded && (tomorrowPricesReady || forcePush) && tomorrowComplete) {
+        val effectiveTomorrowDate = if (effectiveTomorrowPlan != null && syncSucceeded && (tomorrowPricesReady || forcePush) && tomorrowComplete) {
             tomorrowStr
         } else if (state.lastSyncedTomorrowDate == tomorrowStr) {
             tomorrowStr
@@ -577,7 +618,11 @@ class SpotScheduleJobService : JobService() {
                 longitude = settingsStore.weatherLongitude
             )
             val holisticConfig = if (settingsStore.holisticOptimizationEnabled) {
-                settingsStore.buildHolisticOptimizationConfig()
+                settingsStore.buildHolisticOptimizationConfig(
+                    liveStartingReturnTempC = recentSnap?.returnTempC,
+                    liveOutdoorTempC = recentSnap?.outdoorTempC,
+                    liveDhwTankTempC = recentSnap?.dhwTempC
+                )
             } else {
                 null
             }

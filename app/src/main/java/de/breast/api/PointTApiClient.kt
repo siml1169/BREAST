@@ -548,6 +548,7 @@ class PointTApiClient(
         val demandNode = getResource(gatewayId, "/heatSources/actualHeatDemand")
         val chStatusNode = getResource(gatewayId, "/heatSources/chStatus")
         val setpointNode = getResource(gatewayId, "/heatingCircuits/hc1/currentRoomSetpoint")
+        val dhwActualNode = getResource(gatewayId, "/dhwCircuits/dhw1/actualTemp")
 
         HeatPumpTelemetrySnapshot(
             timestampIso = nowIso,
@@ -561,7 +562,8 @@ class PointTApiClient(
             demand = parseString(demandNode),
             chStatus = parseString(chStatusNode),
             spotPriceGrossCt = spotPriceGrossCt,
-            spotPriceNetCt = spotPriceNetCt
+            spotPriceNetCt = spotPriceNetCt,
+            dhwTempC = parseDouble(dhwActualNode)
         )
     }
 }

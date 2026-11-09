@@ -3514,15 +3514,19 @@ class BreastCoreTest {
         val winWithout = planWithout!!.sharedWindows.first()
         val winWith = planWith!!.sharedWindows.first()
 
-        assertEquals("DHW allocation should add exactly 1.90 kWh to window electricity",
-            winWithout.estimatedElectricityKwh + 1.90, winWith.estimatedElectricityKwh, 0.05)
-        assertEquals("DHW allocation should add exactly 1.90 kWh to daily electricity",
+        assertEquals("DHW allocation is isolated from space heating window electricity",
+            winWithout.estimatedElectricityKwh, winWith.estimatedElectricityKwh, 0.05)
+        assertEquals("DHW allocation is captured in estimatedDhwElectricityKwh",
+            1.90, planWith.estimatedDhwElectricityKwh, 0.05)
+        assertEquals("DHW allocation should add exactly 1.90 kWh to daily electricity total",
             planWithout.estimatedDailyTotalElectricityKwh + 1.90, planWith.estimatedDailyTotalElectricityKwh, 0.05)
 
         // At 30 ct/kWh, 1.90 kWh = 0.57 EUR
         val expectedDhwCost = 1.90 * 0.30
-        assertEquals("DHW allocation should add estimated DHW cost to window cost",
-            winWithout.estimatedWindowCostEuro + expectedDhwCost, winWith.estimatedWindowCostEuro, 0.02)
+        assertEquals("DHW allocation is captured in estimatedDhwCostEuro",
+            expectedDhwCost, planWith.estimatedDhwCostEuro, 0.02)
+        assertEquals("DHW allocation should add estimated DHW cost to daily cost total",
+            planWithout.estimatedDailyTotalCostEuro + expectedDhwCost, planWith.estimatedDailyTotalCostEuro, 0.02)
 
         assertTrue("Physics audit must document DHW allocation",
             planWith.physicsBreakdown!!.contains("Domestic Hot Water (DHW Model)"))
