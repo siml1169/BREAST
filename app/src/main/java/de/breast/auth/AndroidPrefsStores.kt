@@ -450,6 +450,22 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
         get() = prefs.getFloat("dhw_daily_energy_kwh", 1.90f).toDouble()
         set(value) = prefs.edit().putFloat("dhw_daily_energy_kwh", value.toFloat()).apply()
 
+    var thermalDisinfectionEnabled: Boolean
+        get() = prefs.getBoolean("thermal_disinfection_enabled", true)
+        set(value) = prefs.edit().putBoolean("thermal_disinfection_enabled", value).apply()
+
+    var thermalDisinfectionWeeklyDay: String
+        get() = prefs.getString("thermal_disinfection_weekly_day", "Su") ?: "Su"
+        set(value) = prefs.edit().putString("thermal_disinfection_weekly_day", value).apply()
+
+    var thermalDisinfectionTimeMinutes: Int
+        get() = prefs.getInt("thermal_disinfection_time_min", 720)
+        set(value) = prefs.edit().putInt("thermal_disinfection_time_min", value).apply()
+
+    var thermalDisinfectionEnergyKwh: Double
+        get() = prefs.getFloat("thermal_disinfection_energy_kwh", 7.0f).toDouble()
+        set(value) = prefs.edit().putFloat("thermal_disinfection_energy_kwh", value.toFloat()).apply()
+
     fun buildHolisticOptimizationConfig(
         targetHeatingTempC: Double = sliderTempC,
         liveStartingReturnTempC: Double? = null
@@ -472,7 +488,11 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             liveStartingReturnTempC = liveStartingReturnTempC,
             adaptiveCycleCount = 0,
             dhwModelingEnabled = dhwModelingEnabled,
-            dhwDailyEnergyKwh = dhwDailyEnergyKwh
+            dhwDailyEnergyKwh = dhwDailyEnergyKwh,
+            thermalDisinfectionEnabled = thermalDisinfectionEnabled,
+            thermalDisinfectionWeeklyDay = thermalDisinfectionWeeklyDay,
+            thermalDisinfectionTimeMinutes = thermalDisinfectionTimeMinutes,
+            thermalDisinfectionEnergyKwh = thermalDisinfectionEnergyKwh
         )
     }
 

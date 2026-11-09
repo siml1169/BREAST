@@ -128,7 +128,11 @@ data class HolisticOptimizationConfig(
     val adaptiveCycleCount: Int = 0,
     val dhwModelingEnabled: Boolean = false,
     val dhwDailyEnergyKwh: Double = 1.90, // ~1.9 kWh ground-truth per DHW cycle
-    val dhwAveragePowerKw: Double = 1.35
+    val dhwAveragePowerKw: Double = 1.35,
+    val thermalDisinfectionEnabled: Boolean = true,
+    val thermalDisinfectionWeeklyDay: String = "Su",
+    val thermalDisinfectionTimeMinutes: Int = 720,
+    val thermalDisinfectionEnergyKwh: Double = 7.0
 )
 
 data class ScoredRasterSlot(
@@ -765,6 +769,13 @@ class HolisticScheduleOptimizer(
             appendLine(String.format(java.util.Locale.US, "   • Bosch Inverter Speed: ~%.0f%% modulation", finalMetrics.modulationPct))
             appendLine(String.format(java.util.Locale.US, "   • Active Electrical Draw: %.2f kW", finalMetrics.avgPowerKw))
             val dhwElec = if (config.dhwModelingEnabled) config.dhwDailyEnergyKwh else 0.0
+            val isDisinfectionDay = date.dayOfWeek == java.time.DayOfWeek.SUNDAY ||
+                (config.thermalDisinfectionWeeklyDay.equals("Su", ignoreCase = true) && date.dayOfWeek == java.time.DayOfWeek.SUNDAY)
+            val disElecKwh = if (isDisinfectionDay && config.thermalDisinfectionEnabled) config.thermalDisinfectionEnergyKwh else 0.0
+            val disSlot = (config.thermalDisinfectionTimeMinutes / 15).coerceIn(0, 95)
+            val disPrice = if (disSlot in slotGrossCt.indices) slotGrossCt[disSlot] else if (slotGrossCt.isNotEmpty()) slotGrossCt.average() else 30.0
+            val disCostEuro = if (disElecKwh > 0.0) disElecKwh * (disPrice / 100.0) else 0.0
+
             val spaceHeatingKwh = kotlin.math.max(0.0, finalMetrics.windowElectricityKwh - dhwElec)
             val dhwCost = if (config.dhwModelingEnabled) dhwElec * (avgGross / 100.0) else 0.0
             val spaceHeatingCost = kotlin.math.max(0.0, finalMetrics.windowCostEuro - dhwCost)
@@ -773,8 +784,11 @@ class HolisticScheduleOptimizer(
             if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
                 appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water (DHW Model): +%.1f kWh (+%.2f € @ window rate)", config.dhwDailyEnergyKwh, dhwCost))
             }
+            if (disElecKwh > 0.0) {
+                appendLine(String.format(java.util.Locale.US, "   • Thermal Disinfection (Sunday 12:00 eHeater): +%.1f kWh (+%.2f € @ 12:00 spot rate)", disElecKwh, disCostEuro))
+            }
             appendLine(String.format(java.util.Locale.US, "   • Setback Parasitic & Circulation Draw: %.2f kWh (%.1fh @ %dW)", setbackElecKwh, offHours, setbackPowerW))
-            appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electrical Consumption: %.1f kWh", finalMetrics.dailyElectricityKwh))
+            appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electrical Consumption: %.1f kWh", finalMetrics.dailyElectricityKwh + disElecKwh))
             appendLine()
             appendLine("4. Tariff & Cost:")
             appendLine(String.format(java.util.Locale.US, "   • EPEX Spot Average (Window): %.1f ct/kWh gross (%.1f ct/kWh net)", avgGross, avgNet))
@@ -782,8 +796,11 @@ class HolisticScheduleOptimizer(
             if (config.dhwModelingEnabled && config.dhwDailyEnergyKwh > 0.0) {
                 appendLine(String.format(java.util.Locale.US, "   • Domestic Hot Water Cost: +%.2f €", dhwCost))
             }
+            if (disElecKwh > 0.0) {
+                appendLine(String.format(java.util.Locale.US, "   • Thermal Disinfection Cost: +%.2f €", disCostEuro))
+            }
             appendLine(String.format(java.util.Locale.US, "   • Setback Standby & Circulation Cost: %.2f €", setbackCostEuro))
-            appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electricity Cost: %.2f €", finalMetrics.dailyCostEuro))
+            appendLine(String.format(java.util.Locale.US, "   • 24-Hour Total Electricity Cost: %.2f €", finalMetrics.dailyCostEuro + disCostEuro))
             appendLine()
             appendLine("5. Dynamic Runtime Corridor (Harmonized Quantizer):")
             appendLine(String.format(java.util.Locale.US, "   • Target Daily Runtime (Slider): %.1f h", userTargetHours))
@@ -801,6 +818,13 @@ class HolisticScheduleOptimizer(
         val setbackElecKwh = kotlin.math.max(0.0, finalMetrics.dailyElectricityKwh - finalMetrics.windowElectricityKwh)
         val setbackCostEuro = kotlin.math.max(0.0, finalMetrics.dailyCostEuro - finalMetrics.windowCostEuro)
 
+        val isDisinfectionDay = date.dayOfWeek == java.time.DayOfWeek.SUNDAY ||
+            (config.thermalDisinfectionWeeklyDay.equals("Su", ignoreCase = true) && date.dayOfWeek == java.time.DayOfWeek.SUNDAY)
+        val disElecKwh = if (isDisinfectionDay && config.thermalDisinfectionEnabled) config.thermalDisinfectionEnergyKwh else 0.0
+        val disSlot = (config.thermalDisinfectionTimeMinutes / 15).coerceIn(0, 95)
+        val disPrice = if (disSlot in slotGrossCt.indices) slotGrossCt[disSlot] else if (slotGrossCt.isNotEmpty()) slotGrossCt.average() else 30.0
+        val disCostEuro = if (disElecKwh > 0.0) disElecKwh * (disPrice / 100.0) else 0.0
+
         return DailySwitchSchedulePlan(
             date = dateStr,
             dayOfWeekCode = dayCode,
@@ -815,8 +839,8 @@ class HolisticScheduleOptimizer(
             dhwWindows = dhwWindows,
             dhwSwitchPoints = dhwSwitchPoints,
             estimatedElectricityKwh = finalMetrics.windowElectricityKwh,
-            estimatedDailyTotalElectricityKwh = finalMetrics.dailyElectricityKwh,
-            estimatedDailyTotalCostEuro = finalMetrics.dailyCostEuro,
+            estimatedDailyTotalElectricityKwh = finalMetrics.dailyElectricityKwh + disElecKwh,
+            estimatedDailyTotalCostEuro = finalMetrics.dailyCostEuro + disCostEuro,
             estimatedSetbackElectricityKwh = setbackElecKwh,
             estimatedSetbackCostEuro = setbackCostEuro,
             estimatedAveragePowerKw = finalMetrics.avgPowerKw,

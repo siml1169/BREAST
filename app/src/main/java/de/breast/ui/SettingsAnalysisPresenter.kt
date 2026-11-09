@@ -63,6 +63,19 @@ data class PowerAnalysisUiModel(
     val calibratedPowerKw: Double
 )
 
+data class DisinfectionAnalysisUiModel(
+    val statusText: String,
+    val statusSuccess: Boolean,
+    val badges: List<AnalysisBadge>,
+    val chip1: AnalysisMetricChip, // Disinfection Energy
+    val chip2: AnalysisMetricChip, // Zuheizer Power
+    val chip3: AnalysisMetricChip, // Peak Lift
+    val chip4: AnalysisMetricChip, // eMon Isolation
+    val nuanceTitle: String,
+    val nuanceItems: List<String>,
+    val applyButtonText: String
+)
+
 data class SafeClearDatabaseResult(
     val isDevMode: Boolean,
     val copyCreated: Boolean,
@@ -270,6 +283,66 @@ object SettingsAnalysisPresenter {
             nuanceItems = nuanceItems,
             applyButtonText = String.format(java.util.Locale.US, i18n.applyPowerBtnFormat, result.updatedEstimatedPowerKw),
             calibratedPowerKw = result.updatedEstimatedPowerKw
+        )
+    }
+
+    fun buildDisinfectionUiModel(
+        disinfectionEnergyKwh: Double = 7.0,
+        peakCondenserTempC: Double = 68.8,
+        spaceHeatingCompKwh: Double = 4.0,
+        scheduledDay: String = "Su",
+        scheduledTimeHm: String = "12:00",
+        isEnabled: Boolean = true,
+        i18n: AppStrings,
+        disI18n: DisinfectionStrings = BreastI18n.disinfectionFor(de.breast.auth.AppLanguage.EN),
+        palette: AnalysisPalette = AnalysisPalette()
+    ): DisinfectionAnalysisUiModel {
+        val badges = mutableListOf<AnalysisBadge>()
+        val dayLabel = if (scheduledDay.equals("Su", ignoreCase = true)) "Sunday $scheduledTimeHm CET" else "$scheduledDay $scheduledTimeHm"
+        badges.add(AnalysisBadge(dayLabel, palette.accentGreenBg, palette.accentGreenStroke, palette.accentGreen))
+        badges.add(AnalysisBadge(String.format(java.util.Locale.US, "%.1f kWh eHeater", disinfectionEnergyKwh), palette.badgeBg, palette.badgeStroke, palette.accentBlue))
+        badges.add(AnalysisBadge("0% Compressor", palette.accentBlueBg, palette.accentBlueStroke, palette.accentBlue))
+        badges.add(AnalysisBadge(String.format(java.util.Locale.US, "Peak %.1f°C", peakCondenserTempC), palette.badgeBg, palette.badgeStroke, palette.textSecondary))
+
+        val chip1 = AnalysisMetricChip(
+            disI18n.chipDisinfectionEnergy,
+            String.format(java.util.Locale.US, "%.1f kWh", disinfectionEnergyKwh),
+            "6.0 kWh @ 12h + 1.0 kWh @ 11h"
+        )
+        val chip2 = AnalysisMetricChip(
+            disI18n.chipDisinfectionPower,
+            "~6.0 kW",
+            "Zuheizer (eHeater)"
+        )
+        val chip3 = AnalysisMetricChip(
+            disI18n.chipDisinfectionLift,
+            String.format(java.util.Locale.US, "%.1f°C", peakCondenserTempC),
+            "Cylinder Return 67.4°C"
+        )
+        val chip4 = AnalysisMetricChip(
+            disI18n.chipDisinfectionIsolation,
+            "Isolated",
+            String.format(java.util.Locale.US, "CH Comp: %.1f kWh", spaceHeatingCompKwh)
+        )
+
+        val nuanceItems = listOf(
+            String.format(java.util.Locale.US, disI18n.nuanceDisinfectionScheduleFormat, "Sunday", scheduledTimeHm, if (isEnabled) "tdMode: on" else "tdMode: off"),
+            String.format(java.util.Locale.US, disI18n.nuanceDisinfectionEmonFormat, disinfectionEnergyKwh),
+            String.format(java.util.Locale.US, disI18n.nuanceDisinfectionPartitionFormat, spaceHeatingCompKwh),
+            String.format(java.util.Locale.US, disI18n.nuanceDisinfectionBudgetFormat, disinfectionEnergyKwh)
+        )
+
+        return DisinfectionAnalysisUiModel(
+            statusText = disI18n.disinfectionVerifiedMsg,
+            statusSuccess = true,
+            badges = badges,
+            chip1 = chip1,
+            chip2 = chip2,
+            chip3 = chip3,
+            chip4 = chip4,
+            nuanceTitle = i18n.nuanceBoxTitle,
+            nuanceItems = nuanceItems,
+            applyButtonText = String.format(java.util.Locale.US, "✓ Thermal Disinfection Active (%.1f kWh)", disinfectionEnergyKwh)
         )
     }
 

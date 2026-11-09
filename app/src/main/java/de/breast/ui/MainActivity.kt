@@ -217,6 +217,11 @@ class MainActivity : ComponentActivity() {
         durationSliderModel = durationSliderModel.withHours(settingsStore.targetOperationHours)
 
         BreastNotificationHelper.ensureChannels(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
+
         requestNotificationPermissionIfNeeded()
 
         currentLanguage = settingsStore.appLanguage
@@ -234,8 +239,13 @@ class MainActivity : ComponentActivity() {
             runManualScheduleSync(forcePush = true)
         } else if (intent?.getStringExtra("action") == "probe" || intent?.action == "de.breast.ACTION_PROBE") {
             lifecycleScope.launch { runDiagnosticProbe() }
+        } else if (intent?.getStringExtra("action") == "probe_emon" || intent?.action == "de.breast.ACTION_PROBE_EMON") {
+            val date = intent?.getStringExtra("date") ?: "2026-11-08"
+            lifecycleScope.launch { runEmonProbe(date) }
         } else if (intent?.getStringExtra("action") == "refresh_telemetry") {
             fetchAndStoreLiveTelemetry()
+        } else if (intent?.getStringExtra("action") == "open_settings") {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
         refreshUiStatus()
     }
@@ -298,8 +308,13 @@ class MainActivity : ComponentActivity() {
             runManualScheduleSync(forcePush = true)
         } else if (intent?.getStringExtra("action") == "probe" || intent?.action == "de.breast.ACTION_PROBE") {
             lifecycleScope.launch { runDiagnosticProbe() }
+        } else if (intent?.getStringExtra("action") == "probe_emon" || intent?.action == "de.breast.ACTION_PROBE_EMON") {
+            val date = intent?.getStringExtra("date") ?: "2026-11-08"
+            lifecycleScope.launch { runEmonProbe(date) }
         } else if (intent?.getStringExtra("action") == "refresh_telemetry") {
             fetchAndStoreLiveTelemetry()
+        } else if (intent?.getStringExtra("action") == "open_settings") {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
     }
 
@@ -2061,6 +2076,96 @@ class MainActivity : ComponentActivity() {
         val rawDemand = pointTClient.getRawResourceJson(gwId, "/heatSources/actualHeatDemand")
         android.util.Log.i("BREAST_PROBE", "RAW actualHeatDemand JSON: $rawDemand")
         android.util.Log.i("BREAST_PROBE", "=== FINISHED BOSCH GATEWAY PROBE ===")
+    }
+
+    private suspend fun runEmonProbe(targetDate: String = "2026-11-08") {
+        val tokens = tokenStore.loadTokens()
+        if (tokens == null) {
+            android.util.Log.e("BREAST_EMON", "No tokens available")
+            return
+        }
+        val gw = pointTClient.getGateways().firstOrNull() ?: run {
+            android.util.Log.e("BREAST_EMON", "No gateways found")
+            return
+        }
+        val gwId = gw.deviceId
+        android.util.Log.i("BREAST_EMON", "=== QUERYING TARGET EMON RECORDINGS FOR $targetDate gw=$gwId ===")
+        val results = mutableMapOf<String, String>()
+
+        // 1. All specific eMon endpoints for both compressor and eheater
+        val endpoints = listOf(
+            "/recordings/heatSources/emon/dhw/eheater",
+            "/recordings/heatSources/emon/dhw/compressor",
+            "/recordings/heatSources/emon/dhw/outputProduced",
+            "/recordings/heatSources/emon/ch/eheater",
+            "/recordings/heatSources/emon/ch/compressor",
+            "/recordings/heatSources/emon/ch/outputProduced",
+            "/recordings/heatSources/emon/total/eheater",
+            "/recordings/heatSources/emon/total/compressor",
+            "/recordings/heatSources/emon/total/outputProduced"
+        )
+
+        for (ep in endpoints) {
+            runCatching {
+                val raw = pointTClient.fetchRawRecording(gwId, ep, targetDate)
+                if (raw != null) {
+                    android.util.Log.i("BREAST_EMON", "EMON_DATA: $ep ($targetDate) -> $raw")
+                    results["$ep?$targetDate"] = raw
+                } else {
+                    android.util.Log.w("BREAST_EMON", "EMON_NULL: $ep ($targetDate)")
+                }
+            }.onFailure { err ->
+                android.util.Log.e("BREAST_EMON", "Error fetching $ep: ${err.message}")
+            }
+        }
+
+        // Also fetch today's (2026-11-09) eheater & compressor data to see current status
+        for (ep in endpoints) {
+            runCatching {
+                val raw = pointTClient.fetchRawRecording(gwId, ep, "2026-11-09")
+                if (raw != null) {
+                    android.util.Log.i("BREAST_EMON", "EMON_TODAY: $ep (2026-11-09) -> $raw")
+                    results["$ep?2026-11-09"] = raw
+                }
+            }
+        }
+
+        // 2. Query /heatSources/eHeater, /heatSources/additionalHeater, /heatSources/electricityConsumption
+        val hsInspect = listOf(
+            "/heatSources/eHeater",
+            "/heatSources/additionalHeater",
+            "/heatSources/electricityConsumption",
+            "/heatSources/compressor",
+            "/heatSources/dhw",
+            "/heatSources/emon"
+        )
+        for (hs in hsInspect) {
+            runCatching {
+                val node = pointTClient.getResource(gwId, hs)
+                android.util.Log.i("BREAST_EMON", "HS_NODE: $hs -> val=${node?.value} refs=${node?.references?.map { it.id }}")
+                results["HS:$hs"] = "val=${node?.value} refs=${node?.references?.map { it.id }}"
+                for (ref in node?.references.orEmpty()) {
+                    val sub = pointTClient.getResource(gwId, ref.id)
+                    android.util.Log.i("BREAST_EMON", "   HS_REF: ${ref.id} -> val=${sub?.value}")
+                    results["HS:${ref.id}"] = "val=${sub?.value}"
+                }
+            }
+        }
+
+        // 3. Save to files/emon_2026-11-08.json
+        val sb = StringBuilder("{\n")
+        val entries = results.entries.toList()
+        for (i in entries.indices) {
+            val e = entries[i]
+            val keyEsc = e.key.replace("\"", "\\\"")
+            val valEsc = if (e.value.startsWith("{") || e.value.startsWith("[")) e.value else "\"${e.value.replace("\"", "\\\"")}\""
+            sb.append("  \"$keyEsc\": $valEsc")
+            if (i < entries.size - 1) sb.append(",")
+            sb.append("\n")
+        }
+        sb.append("}\n")
+        java.io.File(filesDir, "emon_$targetDate.json").writeText(sb.toString())
+        android.util.Log.i("BREAST_EMON", "=== COMPLETED EXACT EMON PROBE: Saved ${results.size} items to files/emon_$targetDate.json ===")
     }
 
     private fun readCurrentHeatPumpSchedule(targetView: TextView? = null) {

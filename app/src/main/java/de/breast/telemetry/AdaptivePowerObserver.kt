@@ -165,7 +165,8 @@ class AdaptivePowerObserver(
                 s.modulationPct != null &&
                 s.modulationPct > 5.0 &&
                 s.isHeatingActive &&
-                !s.isDhwActive
+                !s.isDhwActive &&
+                !s.isThermalDisinfectionActive
         }.sortedBy { it.epochSeconds }
 
         if (dateSnaps.isEmpty()) return null

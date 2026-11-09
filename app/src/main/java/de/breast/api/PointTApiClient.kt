@@ -99,6 +99,14 @@ data class PutResponseDetail(
     val usedFormat: String = ""
 )
 
+@Serializable
+data class ThermalDisinfectionConfig(
+    val isEnabled: Boolean = true,
+    val weekDay: String = "Su",
+    val dayTimeMinutes: Int = 720,
+    val verifiedEnergyKwh: Double = 7.0
+)
+
 class PointTApiClient(
     private val httpClient: OkHttpClient,
     private val authManager: SingleKeyAuthManager,
@@ -479,6 +487,29 @@ class PointTApiClient(
         resourcePath = "/dhwCircuits/$dhwId/charge",
         value = JsonPrimitive(if (start) "start" else "stop")
     )
+
+    /**
+     * Reads the hardware thermal disinfection (Legionellenschutz) configuration directly
+     * from the Bosch gateway (/dhwCircuits/$dhwId/tdMode, tdweekDay, tddayTime).
+     */
+    suspend fun getThermalDisinfectionConfig(
+        gatewayId: String,
+        dhwId: String = "dhw1"
+    ): ThermalDisinfectionConfig = withContext(Dispatchers.IO) {
+        val tdModeNode = getResource(gatewayId, "/dhwCircuits/$dhwId/tdMode")
+        val isEnabled = tdModeNode?.value?.toString()?.trim('"')?.equals("on", ignoreCase = true) == true
+        val tdDayNode = getResource(gatewayId, "/dhwCircuits/$dhwId/tdweekDay")
+        val weekDay = tdDayNode?.value?.toString()?.trim('"') ?: "Su"
+        val tdTimeNode = getResource(gatewayId, "/dhwCircuits/$dhwId/tddayTime")
+        val dayTime = tdTimeNode?.value?.toString()?.toDoubleOrNull()?.toInt() ?: 720
+
+        ThermalDisinfectionConfig(
+            isEnabled = isEnabled,
+            weekDay = weekDay,
+            dayTimeMinutes = dayTime,
+            verifiedEnergyKwh = 7.0
+        )
+    }
 
     suspend fun getHeatPumpTelemetry(
         gatewayId: String,

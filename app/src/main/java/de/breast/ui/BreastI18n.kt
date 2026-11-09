@@ -277,6 +277,20 @@ data class NotificationStrings(
     val intervalNMinFormat: String
 )
 
+data class DisinfectionStrings(
+    val scanningDisinfectionMsg: String,
+    val disinfectionVerifiedMsg: String,
+    val noDisinfectionRunsMsg: String,
+    val chipDisinfectionEnergy: String,
+    val chipDisinfectionPower: String,
+    val chipDisinfectionLift: String,
+    val chipDisinfectionIsolation: String,
+    val nuanceDisinfectionScheduleFormat: String,
+    val nuanceDisinfectionEmonFormat: String,
+    val nuanceDisinfectionPartitionFormat: String,
+    val nuanceDisinfectionBudgetFormat: String
+)
+
 object BreastI18n {
     private val EN = AppStrings(
         appTitle = "BREAST Heatpump",
@@ -1337,6 +1351,56 @@ object BreastI18n {
         interval1Hour = "1 小时",
         intervalNMinFormat = "%d 分钟"
     )
+
+    private val DISINFECTION_EN = DisinfectionStrings(
+        scanningDisinfectionMsg = "Querying Bosch eMon & gateway for weekly thermal disinfection (Legionellenschutz)...",
+        disinfectionVerifiedMsg = "✓ DHW Thermal Disinfection Verified (eMon Ground Truth)",
+        noDisinfectionRunsMsg = "No thermal disinfection cycles detected in telemetry. Disinfection typically runs Sundays at 12:00.",
+        chipDisinfectionEnergy = "Disinfection Load",
+        chipDisinfectionPower = "Zuheizer Power",
+        chipDisinfectionLift = "Peak Lift",
+        chipDisinfectionIsolation = "eMon Isolation",
+        nuanceDisinfectionScheduleFormat = "• Hardware Disinfection Schedule: Bosch K30 firmware executes thermal disinfection on %s at %s (%s, 60°C target).",
+        nuanceDisinfectionEmonFormat = "• Empirical eMon Verification: Recorded %.1f kWh auxiliary heater consumption (/recordings/heatSources/emon/dhw/eheater) at 0%% compressor modulation.",
+        nuanceDisinfectionPartitionFormat = "• Space Heating Partitioning: Isolated auxiliary water heater load from /recordings/heatSources/emon/ch/compressor (%.1f kWh), preventing distortion of P_ref.",
+        nuanceDisinfectionBudgetFormat = "• Sunday Budget Integration: Evaluated %.1f kWh resistive disinfection load at the Sunday 12:00 spot rate without penalizing space heating runtime."
+    )
+
+    private val DISINFECTION_DE = DisinfectionStrings(
+        scanningDisinfectionMsg = "Frage Bosch eMon & Gateway nach wöchentlicher thermischer Desinfektion (Legionellenschutz) ab...",
+        disinfectionVerifiedMsg = "✓ Thermische Desinfektion verifiziert (eMon Ground-Truth)",
+        noDisinfectionRunsMsg = "Keine thermischen Desinfektionszyklen in der Telemetrie gefunden. Desinfektion läuft sonntags um 12:00 Uhr.",
+        chipDisinfectionEnergy = "Desinfektionsenergie",
+        chipDisinfectionPower = "Zuheizer-Leistung",
+        chipDisinfectionLift = "Spitzentemperatur",
+        chipDisinfectionIsolation = "eMon-Isolation",
+        nuanceDisinfectionScheduleFormat = "• Hardware-Zeitplan: Bosch K30-Firmware führt Legionellenschutz am %s um %s Uhr aus (%s, Ziel 60°C).",
+        nuanceDisinfectionEmonFormat = "• Empirische eMon-Messung: %.1f kWh Zuheizer-Energie (/recordings/heatSources/emon/dhw/eheater) bei 0%% Verdichtermodulation verifiziert.",
+        nuanceDisinfectionPartitionFormat = "• Heizkreis-Schutz: Warmwasser-Zuheizer vollständig von /recordings/heatSources/emon/ch/compressor (%.1f kWh) isoliert, P_ref bleibt unverfälscht.",
+        nuanceDisinfectionBudgetFormat = "• Sonntags-Budget: %.1f kWh Zuheizer-Verbrauch zum Sonntags-12:00-Börsenpreis einkalkuliert, ohne Heizlaufzeit zu kürzen."
+    )
+
+    private val DISINFECTION_ZH = DisinfectionStrings(
+        scanningDisinfectionMsg = "正在从博世 eMon 和网关查询每周生活热水高温消毒（军团菌防护）记录...",
+        disinfectionVerifiedMsg = "✓ 热水高温消毒已验证（eMon 实测真值）",
+        noDisinfectionRunsMsg = "遥测中未检测到高温消毒周期。硬件通常于周日 12:00 启动。",
+        chipDisinfectionEnergy = "消毒电耗",
+        chipDisinfectionPower = "辅热电加热功率",
+        chipDisinfectionLift = "峰值水温",
+        chipDisinfectionIsolation = "eMon 数据隔离",
+        nuanceDisinfectionScheduleFormat = "• 硬件消毒计划：博世 K30 固件配置于%s %s执行生活热水高温消毒（%s，目标温度 ≥60°C）。",
+        nuanceDisinfectionEmonFormat = "• 实测 eMon 验证：实测电加热器消耗 %.1f kWh（/recordings/heatSources/emon/dhw/eheater），此时压缩机完全停机（0%% 调制）。",
+        nuanceDisinfectionPartitionFormat = "• 采暖能耗隔离：热水辅热电耗与采暖压缩机能耗（/ch/compressor，%.1f kWh）严格分流隔离，确保采暖基准功率 P_ref 绝不受干扰。",
+        nuanceDisinfectionBudgetFormat = "• 周日预算自适应：周日电价预算精确纳入 12:00 时段的 %.1f kWh 纯阻性加热电耗，避免采暖预算误判超标。"
+    )
+
+    fun disinfectionFor(lang: AppLanguage): DisinfectionStrings {
+        return when (lang) {
+            AppLanguage.DE -> DISINFECTION_DE
+            AppLanguage.ZH -> DISINFECTION_ZH
+            AppLanguage.EN -> DISINFECTION_EN
+        }
+    }
 
     fun notificationsFor(lang: AppLanguage): NotificationStrings {
         return when (lang) {

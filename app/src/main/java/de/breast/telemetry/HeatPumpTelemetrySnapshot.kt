@@ -20,8 +20,20 @@ data class HeatPumpTelemetrySnapshot(
     val deltaTempC: Double?
         get() = if (supplyTempC != null && returnTempC != null) supplyTempC - returnTempC else null
 
+    /**
+     * Detects active thermal disinfection (Legionellen-Schutz) cycle.
+     * The Bosch controller engages the auxiliary immersion heater (Zuheizer, 6 kW) to lift the
+     * DHW storage cylinder above 60°C - 68°C while the heat pump compressor rests at 0% modulation.
+     */
+    val isThermalDisinfectionActive: Boolean
+        get() = ((condenserTempC ?: 0.0) >= 55.0 || (returnTempC ?: 0.0) >= 50.0) &&
+            ((modulationPct ?: 0.0) <= 5.0) &&
+            (demand?.contains("dhw", ignoreCase = true) == true || (condenserTempC ?: 0.0) >= 60.0)
+
     val isDhwActive: Boolean
-        get() = if (demand != null) {
+        get() = if (isThermalDisinfectionActive) {
+            true
+        } else if (demand != null) {
             demand.contains("dhw", ignoreCase = true)
         } else {
             // Legacy / synthetic fallback when demand was not captured by the API:
@@ -38,14 +50,14 @@ data class HeatPumpTelemetrySnapshot(
         )
 
     val isHeatingActive: Boolean
-        get() = !isDhwActive && !isDefrostActive && (
+        get() = !isDhwActive && !isDefrostActive && !isThermalDisinfectionActive && (
             demand?.contains("ch", ignoreCase = true) == true ||
                 demand?.contains("hc", ignoreCase = true) == true ||
                 (demand == null && chStatus?.equals("on", ignoreCase = true) == true && (modulationPct ?: 0.0) > 10.0 && (deltaTempC ?: 0.0) > 0.5)
         )
 
     val isIdle: Boolean
-        get() = !isHeatingActive && !isDhwActive && !isDefrostActive && ((modulationPct ?: 0.0) <= 5.0)
+        get() = !isHeatingActive && !isDhwActive && !isDefrostActive && !isThermalDisinfectionActive && ((modulationPct ?: 0.0) <= 5.0)
 
     fun toCsvRow(): String {
         return listOf(

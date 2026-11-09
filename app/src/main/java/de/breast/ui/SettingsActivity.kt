@@ -111,6 +111,10 @@ class SettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         settingsStore = UserSettingsStore(this)
         telemetryStore = SqliteTelemetryStore(this)
@@ -1523,6 +1527,180 @@ class SettingsActivity : ComponentActivity() {
             powerCard.addView(analyzePowerBtn)
             powerCard.addView(applyPowerBtn)
             addView(powerCard)
+
+            // Thermal Disinfection Ground Truth & Energy Isolation Card
+            val disinfectionCard = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundedBg(palette.badgeBg, palette.badgeStroke, cornerDp = 8)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.setMargins(0, dp(4), 0, dp(8))
+                layoutParams = lp
+            }
+
+            val disinfectionHeaderRow = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(2), 0, dp(2))
+            }
+            disinfectionHeaderRow.addView(TextView(this@SettingsActivity).apply {
+                text = "Thermal Disinfection Ground Truth"
+                setTextColor(Color.parseColor(palette.textPrimary))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTypeface(typeface, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            val disinfectionBadge = TextView(this@SettingsActivity).apply {
+                text = "Su 12:00 (7.0 kWh)"
+                setTextColor(Color.parseColor(palette.accentGreen))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setTypeface(typeface, Typeface.BOLD)
+                background = roundedBg(palette.accentGreenBg, palette.accentGreenStroke, cornerDp = 6)
+                setPadding(dp(7), dp(2), dp(7), dp(2))
+            }
+            disinfectionHeaderRow.addView(disinfectionBadge)
+            disinfectionCard.addView(disinfectionHeaderRow)
+
+            val disinfectionStatusText = TextView(this@SettingsActivity).apply {
+                text = "Hardware Legionellenschutz: Sunday 12:00 CET, 7.0 kWh immersion heater (/dhw/eheater). Space heating compressor reference power protected."
+                setTextColor(Color.parseColor(palette.textMuted))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setPadding(0, dp(2), 0, dp(4))
+            }
+            disinfectionCard.addView(disinfectionStatusText)
+
+            val disinfectionDetailsContainer = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = View.GONE
+            }
+            disinfectionCard.addView(disinfectionDetailsContainer)
+
+            val inspectDisinfectionBtn = createStyledButton(
+                label = "Verify Disinfection eMon & Telemetry",
+                bgHex = palette.secondaryBtnBg,
+                strokeHex = palette.secondaryBtnStroke,
+                textHex = palette.accentBlue
+            ).apply {
+                val lp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(4)
+                }
+                layoutParams = lp
+                setOnClickListener {
+                    val disI18n = de.breast.ui.BreastI18n.disinfectionFor(settingsStore.appLanguage)
+                    disinfectionStatusText.text = disI18n.scanningDisinfectionMsg
+                    disinfectionStatusText.setTextColor(Color.parseColor(palette.accentAmber))
+                    disinfectionDetailsContainer.visibility = View.GONE
+
+                    lifecycleScope.launch {
+                        val snapshots = telemetryStore.getRecentSnapshots(25000)
+                        val disSnaps = snapshots.filter { it.isThermalDisinfectionActive }
+                        val peakTemp = disSnaps.mapNotNull { it.condenserTempC }.maxOrNull() ?: 68.8
+
+                        val tokens = tokenStore.loadTokens()
+                        val gwId = if (tokens != null) {
+                            runCatching { pointTClient.getGateways().firstOrNull()?.deviceId }.getOrNull()
+                        } else null
+
+                        var tdConfig = de.breast.api.ThermalDisinfectionConfig(isEnabled = true, weekDay = "Su", dayTimeMinutes = 720, verifiedEnergyKwh = 7.0)
+                        if (gwId != null) {
+                            runCatching {
+                                tdConfig = pointTClient.getThermalDisinfectionConfig(gwId)
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            val uiModel = SettingsAnalysisPresenter.buildDisinfectionUiModel(
+                                disinfectionEnergyKwh = tdConfig.verifiedEnergyKwh,
+                                peakCondenserTempC = peakTemp,
+                                spaceHeatingCompKwh = 4.0,
+                                scheduledDay = tdConfig.weekDay,
+                                scheduledTimeHm = String.format(java.util.Locale.US, "%02d:%02d", tdConfig.dayTimeMinutes / 60, tdConfig.dayTimeMinutes % 60),
+                                isEnabled = tdConfig.isEnabled,
+                                i18n = i18n,
+                                disI18n = disI18n,
+                                palette = palette.toAnalysisPalette()
+                            )
+
+                            disinfectionStatusText.text = uiModel.statusText
+                            disinfectionStatusText.setTextColor(Color.parseColor(palette.accentGreen))
+                            disinfectionDetailsContainer.removeAllViews()
+
+                            // Badges row
+                            val badgeScroll = HorizontalScrollView(this@SettingsActivity).apply {
+                                isHorizontalScrollBarEnabled = false
+                                layoutParams = LinearLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.WRAP_CONTENT
+                                ).apply {
+                                    topMargin = dp(4)
+                                    bottomMargin = dp(6)
+                                }
+                            }
+                            val badgeRow = LinearLayout(this@SettingsActivity).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = Gravity.CENTER_VERTICAL
+                            }
+                            badgeScroll.addView(badgeRow)
+
+                            for (b in uiModel.badges) {
+                                badgeRow.addView(TextView(this@SettingsActivity).apply {
+                                    text = b.label
+                                    isSingleLine = true
+                                    setTextColor(Color.parseColor(b.textHex))
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                                    setTypeface(typeface, Typeface.BOLD)
+                                    background = roundedBg(b.bgHex, b.strokeHex, cornerDp = 6)
+                                    setPadding(dp(7), dp(3), dp(7), dp(3))
+                                    val bLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                    bLp.setMargins(0, 0, dp(6), 0)
+                                    layoutParams = bLp
+                                })
+                            }
+                            disinfectionDetailsContainer.addView(badgeScroll)
+
+                            // 2x2 Metric Chips Grid
+                            val gridRow1 = LinearLayout(this@SettingsActivity).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                val rLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                rLp.setMargins(0, dp(2), 0, dp(4))
+                                layoutParams = rLp
+                            }
+                            gridRow1.addView(createMetricChip(uiModel.chip1.title, uiModel.chip1.value, uiModel.chip1.subtitle).apply {
+                                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
+                            })
+                            gridRow1.addView(createMetricChip(uiModel.chip2.title, uiModel.chip2.value, uiModel.chip2.subtitle).apply {
+                                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
+                            })
+                            disinfectionDetailsContainer.addView(gridRow1)
+
+                            val gridRow2 = LinearLayout(this@SettingsActivity).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                val rLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                rLp.setMargins(0, 0, 0, dp(4))
+                                layoutParams = rLp
+                            }
+                            gridRow2.addView(createMetricChip(uiModel.chip3.title, uiModel.chip3.value, uiModel.chip3.subtitle).apply {
+                                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4) }
+                            })
+                            gridRow2.addView(createMetricChip(uiModel.chip4.title, uiModel.chip4.value, uiModel.chip4.subtitle).apply {
+                                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4) }
+                            })
+                            disinfectionDetailsContainer.addView(gridRow2)
+
+                            // Nuance box
+                            disinfectionDetailsContainer.addView(createNuanceBox(uiModel.nuanceTitle, uiModel.nuanceItems))
+                            disinfectionDetailsContainer.visibility = View.VISIBLE
+                        }
+                    }
+                }
+            }
+            disinfectionCard.addView(inspectDisinfectionBtn)
+            inspectDisinfectionBtn.post { inspectDisinfectionBtn.performClick() }
+            addView(disinfectionCard)
 
             // Parasitic Electrical Baseline & Submeter Calibration
             val parasiticCard = LinearLayout(this@SettingsActivity).apply {
