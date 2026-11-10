@@ -1110,6 +1110,11 @@ object BreastI18n {
                 .replace("Budget Priority", "Budget")
                 .replace("Budget", "Budget")
                 .replace(" mod)", " Modulation)")
+                .replace("Space Heating (HC1):", "Heizkreis (HC1):")
+                .replace("Hot Water (DHW1):", "Warmwasser (DHW1):")
+                .replace("(DHW ON)", "(WARMWASSER AN)")
+                .replace("(STANDBY)", "(STANDBY)")
+                .replace("Thermal Disinfection 11:30–13:30, Space Heating Eco", "Thermische Desinfektion 11:30–13:30, Heizung Absenkung")
             AppLanguage.ZH -> summary
                 .replace("No window scheduled", "未排程开机窗口")
                 .replace("Translated Switch Points:", "下发至热泵的定时开关点:")
@@ -1132,6 +1137,11 @@ object BreastI18n {
                 .replace("Budget Priority", "预算优先")
                 .replace(" mod)", " 变频调制)")
                 .replace(" 24h", " 24小时")
+                .replace("Space Heating (HC1):", "空间采暖 (HC1):")
+                .replace("Hot Water (DHW1):", "生活热水 (DHW1):")
+                .replace("(DHW ON)", "(热水加热开启)")
+                .replace("(STANDBY)", "(待机)")
+                .replace("Thermal Disinfection 11:30–13:30, Space Heating Eco", "高温热消毒 11:30–13:30 (采暖强制回落)")
             AppLanguage.EN -> summary
         }
     }
@@ -1195,6 +1205,13 @@ object BreastI18n {
                 .replace("Efficiency", "Effizienz")
                 .replace("Budget Priority", "Budget")
                 .replace("Budget", "Budget")
+                .replace("6. Decoupled Circuits & Inter-Day Continuity:", "6. Entkoppelte Heizkreise & Mehrtägige Kontinuität:")
+                .replace("Inter-Day Continuous Off-Gap:", "Mehrtägige zusammenhängende Heizpause:")
+                .replace("excess cooldown", "zusätzliche Auskühlung")
+                .replace("within safe 16h limit", "im sicheren 16h-Grenzwert")
+                .replace("Dedicated DHW Window:", "Eigenständiges Warmwasser-Fenster:")
+                .replace("[Thermal Disinfection Window - Space Heating Paused]", "[Thermische Desinfektion - Raumheizung pausiert]")
+                .replace("[Solar Noon Carnot Peak]", "[Mittags-PV / Carnot-Spitze]")
             AppLanguage.ZH -> breakdown
                 .replace("1. Weather Conditions (DWD ICON Forecast):", "1. 气象条件 (德国气象局 DWD ICON 预报):")
                 .replace("24h Average Outdoor Temp:", "24小时平均室外气温:")
@@ -1252,6 +1269,13 @@ object BreastI18n {
                 .replace("Balanced", "均衡模式")
                 .replace("Efficiency", "能效优先")
                 .replace("Budget Priority", "预算优先")
+                .replace("6. Decoupled Circuits & Inter-Day Continuity:", "6. 回路解耦与跨日连续性保护:")
+                .replace("Inter-Day Continuous Off-Gap:", "跨日连续停机间隙:")
+                .replace("excess cooldown", "超额降温")
+                .replace("within safe 16h limit", "在16小时安全阈值内")
+                .replace("Dedicated DHW Window:", "专属生活热水加热窗口:")
+                .replace("[Thermal Disinfection Window - Space Heating Paused]", "[高温热消毒窗口 - 采暖强制回落]")
+                .replace("[Solar Noon Carnot Peak]", "[正午光伏/卡诺效率最高点]")
             AppLanguage.EN -> breakdown
         }
     }

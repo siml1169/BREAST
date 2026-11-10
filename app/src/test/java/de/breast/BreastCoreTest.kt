@@ -3788,4 +3788,138 @@ class BreastCoreTest {
         assertTrue("Efficiency Priority must schedule midday window (start >= 08:00) rather than midnight (was start: ${win.startMinutes}m = ${win.startMinutes / 60.0}h)",
             win.startMinutes >= 480)
     }
+    @Test
+    fun `HolisticScheduleOptimizer excludes space heating during Sunday thermal disinfection window and decouples DHW`() {
+        // Nov 8, 2026 is a Sunday
+        val sunday = LocalDate.of(2026, 11, 8)
+        val dayStart = sunday.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 21.01)
+
+        val slots = (0 until 24).map { h ->
+            val net = 20.0
+            SpotPriceSlot(
+                startEpochSeconds = dayStart + h * 3600L,
+                endEpochSeconds = dayStart + (h + 1) * 3600L,
+                spotEurPerMwh = net * 10.0,
+                spotNetCtPerKwh = net,
+                totalGrossCtPerKwh = tariff.computeGrossCtPerKwh(net * 10.0)
+            )
+        }
+
+        val weatherForecast = (0 until 24).map { h ->
+            HourlyWeatherForecast(
+                dateTime = String.format(java.util.Locale.US, "2026-11-08T%02d:00", h),
+                outdoorTempC = 6.0
+            )
+        }
+
+        val optimizer = HolisticScheduleOptimizer(
+            config = HolisticOptimizationConfig(
+                targetHeatingTempC = 22.0,
+                targetDailyRuntimeHours = 8.0,
+                decoupleDhwScheduleEnabled = true,
+                thermalDisinfectionEnabled = true,
+                thermalDisinfectionWeeklyDay = "Su",
+                thermalDisinfectionTimeMinutes = 720 // 12:00 Sunday
+            )
+        )
+
+        val plan = optimizer.buildSchedule(sunday, slots, weatherForecast)
+        assertNotNull(plan)
+        val p = plan!!
+
+        // 1. DHW window must cover the 11:30–13:30 disinfection blackout (690 to 810 minutes)
+        assertEquals(1, p.dhwWindows.size)
+        val dhwWin = p.dhwWindows.first()
+        assertEquals(690, dhwWin.startMinutes)
+        assertEquals(810, dhwWin.endMinutes)
+
+        // 2. Space heating windows must NOT overlap with 11:30–13:30 (690..810)
+        for (hw in p.heatingWindows) {
+            val overlapsDisinfection = hw.startMinutes < 810 && hw.endMinutes > 690
+            assertFalse("Space heating window [${hw.startMinutes}m..${hw.endMinutes}m] must not overlap Sunday disinfection window 11:30–13:30", overlapsDisinfection)
+        }
+
+        // 3. DHW switch points must have low @ 11:30 and off @ 13:30
+        assertTrue("DHW switch points must contain 11:30 (690m)", p.dhwSwitchPoints.any { it.time == 690 && it.setpoint == "low" })
+        assertTrue("DHW switch points must contain 13:30 (810m)", p.dhwSwitchPoints.any { it.time == 810 && it.setpoint == "off" })
+
+        // 4. Physics breakdown mentions thermal disinfection
+        assertTrue("Physics breakdown mentions Thermal Disinfection Window", p.physicsBreakdown?.contains("Thermal Disinfection Window") == true)
+    }
+
+    @Test
+    fun `HolisticScheduleOptimizer penalizes long inter-day off gap and biases next day window early`() {
+        val tuesday = LocalDate.of(2026, 11, 10)
+        val dayStart = tuesday.atStartOfDay(SpotPriceClient.BERLIN_ZONE).toInstant().epochSecond
+        val tariff = VattenfallTariffConfig(vatRate = 0.19, regionalSurchargeGrossCtPerKwh = 21.01)
+
+        // Uniform electricity price across the entire day
+        val slots = (0 until 24).map { h ->
+            val net = 22.0
+            SpotPriceSlot(
+                startEpochSeconds = dayStart + h * 3600L,
+                endEpochSeconds = dayStart + (h + 1) * 3600L,
+                spotEurPerMwh = net * 10.0,
+                spotNetCtPerKwh = net,
+                totalGrossCtPerKwh = tariff.computeGrossCtPerKwh(net * 10.0)
+            )
+        }
+
+        // Slightly colder at night (3°C) vs afternoon (6°C)
+        val weatherForecast = (0 until 24).map { h ->
+            val temp = if (h in 11..16) 6.0 else 3.0
+            HourlyWeatherForecast(
+                dateTime = String.format(java.util.Locale.US, "2026-11-10T%02d:00", h),
+                outdoorTempC = temp
+            )
+        }
+
+        // Yesterday's window ended early in morning at 08:00 (480 minutes).
+        val optimizer = HolisticScheduleOptimizer(
+            config = HolisticOptimizationConfig(
+                targetHeatingTempC = 22.0,
+                targetDailyRuntimeHours = 8.0,
+                coolingRateKPerHour = 0.35,
+                previousDayWindowEndMinute = 480, // 08:00 yesterday
+                maxAllowedInterDayOffHours = 16.0,
+                liveStartingReturnTempC = 24.5
+            )
+        )
+
+        val plan = optimizer.buildSchedule(tuesday, slots, weatherForecast)
+        assertNotNull(plan)
+        val p = plan!!
+        val startMin = p.heatingWindows.first().startMinutes
+
+        // With yesterday ending at 08:00 (480m), to keep inter-day off gap reasonable (<= 16-20h),
+        // Tuesday must start before 10:00 (600m), avoiding deep screed cooldown.
+        assertTrue("Inter-day cooldown penalty must schedule window early in morning (start: ${startMin}m = ${startMin / 60.0}h, expected < 10:00 = 600m)",
+            startMin < 600)
+        assertTrue("Physics breakdown must detail Inter-Day Continuous Off-Gap", p.physicsBreakdown?.contains("Inter-Day Continuous Off-Gap") == true)
+    }
+
+    @Test
+    fun `AutoScheduleDaemon formats and syncs decoupled HC1 and DHW1 switch programs and extracts end minute`() {
+        val summary = "06:00 – 14:00 (8.0h) | Avg 24.5 ct/kWh gross | Target 22.0°C | Est. 7.2 kWh\n" +
+            "  ► Space Heating (HC1):\n" +
+            "    ► 06:00  comfort2 @ 22.0°C (HEATING ON)\n" +
+            "    ► 14:00  setback @ 17.0°C (SETBACK)\n" +
+            "  ► Hot Water (DHW1):\n" +
+            "    ► 12:00  low @ 42°C (DHW ON)\n" +
+            "    ► 13:00  off (STANDBY)"
+
+        val endMin = AutoScheduleDaemon.extractEndMinute(summary)
+        assertEquals(14 * 60, endMin)
+
+        val state = ScheduleSyncState(
+            lastSyncedTodayDate = "2026-11-10",
+            lastSyncedTomorrowDate = "2026-11-11",
+            todayWindowEndMinute = 840,
+            tomorrowWindowEndMinute = 960,
+            todayWindowSummary = summary
+        )
+        assertEquals(840, state.todayWindowEndMinute)
+        assertEquals(960, state.tomorrowWindowEndMinute)
+    }
 }

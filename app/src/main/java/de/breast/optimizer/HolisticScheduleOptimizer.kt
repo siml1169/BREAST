@@ -131,10 +131,14 @@ data class HolisticOptimizationConfig(
     val dhwModelingEnabled: Boolean = false,
     val dhwDailyEnergyKwh: Double = 1.90, // ~1.9 kWh ground-truth per DHW cycle
     val dhwAveragePowerKw: Double = 1.35,
-    val thermalDisinfectionEnabled: Boolean = true,
+    val thermalDisinfectionEnabled: Boolean = false,
     val thermalDisinfectionWeeklyDay: String = "Su",
     val thermalDisinfectionTimeMinutes: Int = 720,
-    val thermalDisinfectionEnergyKwh: Double = 7.0
+    val thermalDisinfectionEnergyKwh: Double = 7.0,
+    val decoupleDhwScheduleEnabled: Boolean = false,
+    val maxAllowedInterDayOffHours: Double = 16.0,
+    val previousDayWindowEndMinute: Int? = null,
+    val dhwTargetDurationMinutes: Int = 60
 )
 
 data class ScoredRasterSlot(
@@ -416,6 +420,12 @@ class HolisticScheduleOptimizer(
 
         // 4. Multi-Criteria Candidate Window Evaluation with Two-Stage Budget Verification
         val lagSlots = (2.5 / rasterH).roundToInt() // 2.5h screed diffusion delay
+        val dayCode = toBoschDayOfWeek(date.dayOfWeek)
+        val dateStr = date.toString()
+        val isSundayDisinfection = config.thermalDisinfectionEnabled &&
+            (date.dayOfWeek == java.time.DayOfWeek.SUNDAY || dayCode.equals(config.thermalDisinfectionWeeklyDay, ignoreCase = true))
+        val tdStartMin = config.thermalDisinfectionTimeMinutes - 30 // 11:30
+        val tdEndMin = config.thermalDisinfectionTimeMinutes + 90   // 13:30
 
         fun evaluateSlotCountRange(slotRange: IntRange, filterBudget: Boolean = true): List<CandidateWindow> {
             val result = mutableListOf<CandidateWindow>()
@@ -425,6 +435,30 @@ class HolisticScheduleOptimizer(
 
                 for (startIdx in 0..(usableN - on)) {
                     val endIdx = startIdx + on
+                    val candStartMin = scoredSlots[startIdx].startMinutes
+                    val candEndMin = scoredSlots[endIdx - 1].endMinutes
+
+                    // Thermal Disinfection Blackout: On Sunday, disallow Space Heating overlapping 11:30–13:30
+                    if (isSundayDisinfection && durH <= 11.5) {
+                        val overlapsDisinfection = candStartMin < tdEndMin && candEndMin > tdStartMin
+                        if (overlapsDisinfection) {
+                            continue
+                        }
+                    }
+
+                    // Inter-day continuous off-gap and candidate starting return temp
+                    val prevEndMin = config.previousDayWindowEndMinute
+                    val interDayOffHours = if (prevEndMin != null) {
+                        ((1440 - prevEndMin) + candStartMin) / 60.0
+                    } else null
+
+                    val candidateInitialReturn = if (projectedMidnightReturn != null) {
+                        val hoursPastMidnight = candStartMin / 60.0
+                        val decayPastMidnightK = hoursPastMidnight * config.coolingRateKPerHour * 0.35
+                        val setbackFloor = controlSimulator?.estimateTargetReturnTempC(effectiveHourlyTemps.firstOrNull() ?: 8.0, 17.0) ?: 20.5
+                        max(setbackFloor, projectedMidnightReturn - decayPastMidnightK)
+                    } else null
+
                     val metrics = computeWindowMetrics(
                         startIdx = startIdx,
                         endIdx = endIdx,
@@ -439,7 +473,7 @@ class HolisticScheduleOptimizer(
                         slotGrossCt = slotGrossCt,
                         rasterMinutes = rasterMinutes,
                         controlSimulator = controlSimulator,
-                        initialReturnTempC = projectedMidnightReturn
+                        initialReturnTempC = candidateInitialReturn ?: projectedMidnightReturn
                     )
 
                     if (filterBudget && config.dailyBudgetEuro != null && metrics.euroCost > config.dailyBudgetEuro + 1e-6) {
@@ -450,7 +484,11 @@ class HolisticScheduleOptimizer(
                     val avgGrossCtPerKwh = (prefixGross[endIdx] - prefixGross[startIdx]) / on
                     val wasteHours = max(0.0, deltaH - maxArbitrageBufferHours)
                     val wastePenalty = wasteHours * (config.grossBaseFloorCtPerKwh / 100.0) * 10.0
-                    val rawBudget = avgGrossCtPerKwh + wastePenalty
+                    val excessOffHours = if (interDayOffHours != null) max(0.0, interDayOffHours - config.maxAllowedInterDayOffHours) else 0.0
+                    val interDayCooldownPenalty = if (excessOffHours > 0.0) 1.5 * excessOffHours.pow(1.5) else 0.0
+                    val disinfectionCollisionPenalty = if (isSundayDisinfection && (candStartMin < tdEndMin && candEndMin > tdStartMin)) 500.0 else 0.0
+
+                    val rawBudget = avgGrossCtPerKwh + wastePenalty + (interDayCooldownPenalty * 0.2) + disinfectionCollisionPenalty
 
                     // B. Efficiency Utility (Carnot specific consumption + cold-restart rebound penalty + longer daytime duration bonus)
                     val effSum = prefixScore[endIdx] - prefixScore[startIdx]
@@ -460,9 +498,9 @@ class HolisticScheduleOptimizer(
                         // In efficiency mode: prefer longer daytime window (up to +2.0h above target) at low inverter modulation.
                         -0.05 * max(0.0, durH - userTargetHours)
                     } else 0.0
-                    val rawEfficiency = avgEffScore + reboundPenalty + longerDurationBonus
+                    val rawEfficiency = avgEffScore + reboundPenalty + longerDurationBonus + (interDayCooldownPenalty * 0.4) + disinfectionCollisionPenalty
 
-                    // C. Comfort Utility (Screed diffusion delay ~2.5h + runtime deficit penalty + off-gap cooldown)
+                    // C. Comfort Utility (Screed diffusion delay ~2.5h + runtime deficit penalty + off-gap cooldown + inter-day cooldown)
                     val emitStart = startIdx + lagSlots
                     val emitEnd = endIdx + lagSlots
                     var activeOverlap = 0
@@ -481,7 +519,7 @@ class HolisticScheduleOptimizer(
                     val cooldownPenalty = if (offHours > config.preference.maxOffHours) {
                         0.5 * (offHours - config.preference.maxOffHours).pow(1.5)
                     } else 0.0
-                    val rawComfort = (1.0 - activeFrac) + underheatPenalty + cooldownPenalty
+                    val rawComfort = (1.0 - activeFrac) + underheatPenalty + cooldownPenalty + interDayCooldownPenalty + disinfectionCollisionPenalty
 
                     result.add(
                         CandidateWindow(
@@ -709,9 +747,6 @@ class HolisticScheduleOptimizer(
         val avgGross = (prefixGross[endIdx] - prefixGross[startIdx]) / chosenLen
         val avgNet = (prefixNet[endIdx] - prefixNet[startIdx]) / chosenLen
 
-        val dayCode = toBoschDayOfWeek(date.dayOfWeek)
-        val dateStr = date.toString()
-
         val sharedWindow = TimeWindow(
             date = dateStr,
             dayOfWeekCode = dayCode,
@@ -735,14 +770,93 @@ class HolisticScheduleOptimizer(
         }
 
         val heatingWindows = listOf(sharedWindow.copy(setpoint = config.heatingOnSetpoint))
-        val dhwWindows = listOf(sharedWindow.copy(setpoint = config.dhwOnSetpoint))
-
         val heatingSwitchPoints = windowsToSwitchPoints(
             dayOfWeekCode = dayCode,
             windows = heatingWindows,
             onSetpoint = config.heatingOnSetpoint,
             offSetpoint = config.heatingOffSetpoint
         )
+
+        val dhwWindows = if (config.decoupleDhwScheduleEnabled) {
+            if (isSundayDisinfection) {
+                val startSlot = (tdStartMin / rasterMinutes).coerceIn(0, usableN - 1)
+                val endSlot = (tdEndMin / rasterMinutes).coerceIn(startSlot + 1, usableN)
+                val len = max(1, endSlot - startSlot)
+                val avgGrossDhw = (prefixGross[endSlot] - prefixGross[startSlot]) / len
+                val avgNetDhw = (prefixNet[endSlot] - prefixNet[startSlot]) / len
+                val dhwCost = config.thermalDisinfectionEnergyKwh * (avgGrossDhw / 100.0)
+                listOf(
+                    TimeWindow(
+                        date = dateStr,
+                        dayOfWeekCode = dayCode,
+                        startMinutes = tdStartMin,
+                        endMinutes = tdEndMin,
+                        setpoint = config.dhwOnSetpoint,
+                        averageGrossCtPerKwh = avgGrossDhw,
+                        averageSpotNetCtPerKwh = avgNetDhw,
+                        estimatedWindowCostEuro = dhwCost,
+                        estimatedElectricityKwh = config.thermalDisinfectionEnergyKwh,
+                        estimatedAveragePowerKw = config.dhwAveragePowerKw,
+                        estimatedModulationPct = 48.0
+                    )
+                )
+            } else {
+                val dhwSlotsCount = (config.dhwTargetDurationMinutes.coerceIn(30, 120) / rasterMinutes).coerceAtLeast(1)
+                val minDhwSlot = (660 / rasterMinutes).coerceIn(0, usableN - dhwSlotsCount) // 11:00
+                val maxDhwSlot = (960 / rasterMinutes).coerceIn(minDhwSlot + dhwSlotsCount, usableN) // 16:00
+
+                var bestDhwSlot = minDhwSlot
+                var bestDhwScore = Double.MAX_VALUE
+                val hStartMin = scoredSlots[startIdx].startMinutes
+                val hEndMin = scoredSlots[endIdx - 1].endMinutes
+
+                for (s in minDhwSlot..(maxDhwSlot - dhwSlotsCount)) {
+                    val e = s + dhwSlotsCount
+                    val sMin = scoredSlots[s].startMinutes
+                    val eMin = scoredSlots[e - 1].endMinutes
+                    val outT = (prefixOutdoorT[e] - prefixOutdoorT[s]) / dhwSlotsCount
+                    val copDhw = (1.0 / (0.00542 * max(4.0, 50.0 - outT) + 0.060)).coerceIn(1.8, 6.0)
+                    val grossPrice = (prefixGross[e] - prefixGross[s]) / dhwSlotsCount
+                    val heatCost = grossPrice / copDhw
+
+                    // Non-overlapping bonus with Space Heating
+                    val overlap = sMin < hEndMin && eMin > hStartMin
+                    val overlapPenalty = if (overlap) 50.0 else 0.0
+
+                    val score = heatCost + overlapPenalty
+                    if (score < bestDhwScore) {
+                        bestDhwScore = score
+                        bestDhwSlot = s
+                    }
+                }
+
+                val bestEndSlot = bestDhwSlot + dhwSlotsCount
+                val avgGrossDhw = (prefixGross[bestEndSlot] - prefixGross[bestDhwSlot]) / dhwSlotsCount
+                val avgNetDhw = (prefixNet[bestEndSlot] - prefixNet[bestDhwSlot]) / dhwSlotsCount
+                val outT = (prefixOutdoorT[bestEndSlot] - prefixOutdoorT[bestDhwSlot]) / dhwSlotsCount
+                val copDhw = (1.0 / (0.00542 * max(4.0, 50.0 - outT) + 0.060)).coerceIn(1.8, 6.0)
+                val elecKwh = (config.dhwDailyEnergyKwh / copDhw).coerceIn(0.4, 2.5)
+                val dhwCost = elecKwh * (avgGrossDhw / 100.0)
+
+                listOf(
+                    TimeWindow(
+                        date = dateStr,
+                        dayOfWeekCode = dayCode,
+                        startMinutes = scoredSlots[bestDhwSlot].startMinutes,
+                        endMinutes = scoredSlots[bestEndSlot - 1].endMinutes,
+                        setpoint = config.dhwOnSetpoint,
+                        averageGrossCtPerKwh = avgGrossDhw,
+                        averageSpotNetCtPerKwh = avgNetDhw,
+                        estimatedWindowCostEuro = dhwCost,
+                        estimatedElectricityKwh = elecKwh,
+                        estimatedAveragePowerKw = elecKwh / (config.dhwTargetDurationMinutes / 60.0),
+                        estimatedModulationPct = 40.0
+                    )
+                )
+            }
+        } else {
+            listOf(sharedWindow.copy(setpoint = config.dhwOnSetpoint))
+        }
 
         val dhwSwitchPoints = windowsToSwitchPoints(
             dayOfWeekCode = dayCode,
@@ -842,6 +956,27 @@ class HolisticScheduleOptimizer(
             val deltaHPlanned = hours - userTargetHours
             val sign = if (deltaHPlanned >= 0.0) "+" else ""
             appendLine(String.format(java.util.Locale.US, "   • Applied Schedule Duration: %.1f h (%s%.1f h vs target slider)", hours, sign, deltaHPlanned))
+            appendLine()
+            appendLine("6. Decoupled Circuits & Inter-Day Continuity:")
+            if (config.previousDayWindowEndMinute != null) {
+                val prevEndMin = config.previousDayWindowEndMinute
+                val interDayOffH = ((1440 - prevEndMin) + scoredSlots[startIdx].startMinutes) / 60.0
+                val excessH = max(0.0, interDayOffH - config.maxAllowedInterDayOffHours)
+                val excessStr = if (excessH > 0.0) String.format(java.util.Locale.US, " (+%.1fh excess cooldown)", excessH) else " (within safe 16h limit)"
+                appendLine(String.format(java.util.Locale.US, "   • Inter-Day Continuous Off-Gap: %.1f h%s", interDayOffH, excessStr))
+            }
+            if (config.decoupleDhwScheduleEnabled) {
+                val dhwWin = dhwWindows.firstOrNull()
+                if (dhwWin != null) {
+                    val dSh = dhwWin.startMinutes / 60
+                    val dSm = dhwWin.startMinutes % 60
+                    val dEh = dhwWin.endMinutes / 60
+                    val dEm = dhwWin.endMinutes % 60
+                    val dDurH = dhwWin.durationMinutes / 60.0
+                    val disNote = if (isSundayDisinfection) " [Thermal Disinfection Window - Space Heating Paused]" else " [Solar Noon Carnot Peak]"
+                    appendLine(String.format(java.util.Locale.US, "   • Dedicated DHW Window: %02d:%02d – %02d:%02d (%.1fh)%s", dSh, dSm, dEh, dEm, dDurH, disNote))
+                }
+            }
         }
 
         val setbackElecKwh = kotlin.math.max(0.0, finalMetrics.dailyElectricityKwh - finalMetrics.windowElectricityKwh)

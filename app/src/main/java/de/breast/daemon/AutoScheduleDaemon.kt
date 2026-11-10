@@ -64,7 +64,9 @@ data class ScheduleSyncState(
     val lastAppliedSettingsSignature: String? = null,
     val appliedPreferenceId: String? = null,
     val todayPhysicsBreakdown: String? = null,
-    val tomorrowPhysicsBreakdown: String? = null
+    val tomorrowPhysicsBreakdown: String? = null,
+    val todayWindowEndMinute: Int? = null,
+    val tomorrowWindowEndMinute: Int? = null
 )
 
 interface ScheduleStateStore {
@@ -97,6 +99,14 @@ class AutoScheduleDaemon(
 ) {
     companion object {
         const val DAY_AHEAD_RELEASE_START_HOUR = 12
+        private val SUMMARY_TIME_REGEX = Regex("""(\d{2}):(\d{2})\s*[–-]\s*(\d{2}):(\d{2})""")
+
+        fun extractEndMinute(summary: String): Int? {
+            val match = SUMMARY_TIME_REGEX.find(summary) ?: return null
+            val eh = match.groupValues[3].toIntOrNull() ?: return null
+            val em = match.groupValues[4].toIntOrNull() ?: return null
+            return eh * 60 + em
+        }
     }
 
     suspend fun runHourlyCheckCycle(
@@ -292,11 +302,21 @@ class AutoScheduleDaemon(
             runCatching { client.fetchHourlyForecast(today, 2) }.getOrDefault(emptyList())
         } ?: emptyList()
 
+        val existingTodayEndMinute = state.todayWindowEndMinute
+            ?: if (state.lastSyncedTomorrowDate == todayStr) state.tomorrowWindowEndMinute else null
+            ?: state.todayWindowSummary?.let { extractEndMinute(it) }
+
         val plansToSync = mutableListOf<DailySwitchSchedulePlan>()
         val todayConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
         val todayPlan = if (todayComplete && (!isTodayLocked || state.todayWindowSummary == null)) {
             scheduler.buildDailySwitchSchedule(today, spotSlots, weatherForecast, todayConfig)
         } else null
+
+        val effectiveTodayEndMin = if (isTodayLocked) {
+            existingTodayEndMinute
+        } else {
+            todayPlan?.heatingWindows?.lastOrNull()?.endMinutes ?: existingTodayEndMinute
+        }
 
         if (todayPlan != null && effectiveNeedsTodaySync) {
             plansToSync.add(todayPlan)
@@ -304,7 +324,10 @@ class AutoScheduleDaemon(
 
         var tomorrowPlan: DailySwitchSchedulePlan? = null
         if (tomorrowComplete && (tomorrowPricesReady || forcePush || needsTomorrowSync)) {
-            val tomorrowConfig = effectiveHolisticConfig?.copy(liveStartingReturnTempC = liveReturnTempC)
+            val tomorrowConfig = effectiveHolisticConfig?.copy(
+                liveStartingReturnTempC = liveReturnTempC,
+                previousDayWindowEndMinute = effectiveTodayEndMin
+            )
             tomorrowPlan = scheduler.buildDailySwitchSchedule(tomorrow, spotSlots, weatherForecast, tomorrowConfig)
             if (tomorrowPlan != null) {
                 plansToSync.add(tomorrowPlan)
@@ -414,15 +437,42 @@ class AutoScheduleDaemon(
             val budgetNote = if (plan.budgetCutMinutes > 0) " (budget-cut -${plan.budgetCutMinutes}m)" else ""
             val prefTitle = holisticConfig?.preference?.title ?: "Standard Window"
 
-            val spLines = plan.heatingSwitchPoints.joinToString("\n") { sp ->
-                val timeHm = String.format("%02d:%02d", sp.time / 60, sp.time % 60)
-                val isComfort = sp.setpoint == cfg.heatingOnSetpoint || sp.setpoint.contains("comfort", ignoreCase = true)
-                val label = if (isComfort) {
-                    "comfort2 @ ${plan.targetHeatingTempC}°C (HEATING ON)  •  DHW low @ 42°C"
-                } else {
-                    "${sp.setpoint} @ 17.0°C (SETBACK)  •  DHW off"
+            val isDecoupled = plan.heatingWindows != plan.dhwWindows && plan.dhwWindows.isNotEmpty()
+            val spLines = if (isDecoupled) {
+                val hcLines = plan.heatingSwitchPoints.joinToString("\n") { sp ->
+                    val timeHm = String.format("%02d:%02d", sp.time / 60, sp.time % 60)
+                    val isComfort = sp.setpoint == cfg.heatingOnSetpoint || sp.setpoint.contains("comfort", ignoreCase = true)
+                    val label = if (isComfort) {
+                        "comfort2 @ ${plan.targetHeatingTempC}°C (HEATING ON)"
+                    } else {
+                        "${sp.setpoint} @ 17.0°C (SETBACK)"
+                    }
+                    "    ► $timeHm  $label"
                 }
-                "  ► $timeHm  $label"
+                val isSunday = plan.dayOfWeekCode == "Su"
+                val dhwLines = plan.dhwSwitchPoints.joinToString("\n") { sp ->
+                    val timeHm = String.format("%02d:%02d", sp.time / 60, sp.time % 60)
+                    val isOn = sp.setpoint == cfg.dhwOnSetpoint || sp.setpoint.equals("low", ignoreCase = true)
+                    val label = if (isOn) {
+                        if (isSunday) "low @ 42°C (Thermal Disinfection 11:30–13:30, Space Heating Eco)"
+                        else "low @ 42°C (DHW ON)"
+                    } else {
+                        "off (STANDBY)"
+                    }
+                    "    ► $timeHm  $label"
+                }
+                "  ► Space Heating (HC1):\n$hcLines\n  ► Hot Water (DHW1):\n$dhwLines"
+            } else {
+                plan.heatingSwitchPoints.joinToString("\n") { sp ->
+                    val timeHm = String.format("%02d:%02d", sp.time / 60, sp.time % 60)
+                    val isComfort = sp.setpoint == cfg.heatingOnSetpoint || sp.setpoint.contains("comfort", ignoreCase = true)
+                    val label = if (isComfort) {
+                        "comfort2 @ ${plan.targetHeatingTempC}°C (HEATING ON)  •  DHW low @ 42°C"
+                    } else {
+                        "${sp.setpoint} @ 17.0°C (SETBACK)  •  DHW off"
+                    }
+                    "  ► $timeHm  $label"
+                }
             }
 
             val costInfo = if (plan.estimatedDailyTotalCostEuro > plan.estimatedDailyCostEuro + 0.02) {
@@ -557,6 +607,10 @@ class AutoScheduleDaemon(
             null
         }
 
+        val effectiveTomorrowEndMin = effectiveTomorrowPlan?.heatingWindows?.lastOrNull()?.endMinutes
+            ?: if (state.lastSyncedTomorrowDate == tomorrowStr) state.tomorrowWindowEndMinute
+            else null
+
         val newState = ScheduleSyncState(
             lastSyncedTodayDate = effectiveTodayDate,
             lastSyncedTomorrowDate = effectiveTomorrowDate,
@@ -568,6 +622,8 @@ class AutoScheduleDaemon(
             tomorrowWindowSummary = effectiveTomorrowSummary,
             todayPhysicsBreakdown = effectiveTodayPhysics,
             tomorrowPhysicsBreakdown = effectiveTomorrowPhysics,
+            todayWindowEndMinute = effectiveTodayEndMin,
+            tomorrowWindowEndMinute = effectiveTomorrowEndMin,
             lastRunLog = logs.joinToString("\n"),
             appliedScheduleSignatures = updatedSignatures,
             appliedScheduleNote = appliedNote,

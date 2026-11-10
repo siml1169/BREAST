@@ -178,7 +178,13 @@ data class SwitchScheduleConfig(
     val zeroPriceExtensionEnabled: Boolean = false,
     val zeroPriceThresholdNetCtPerKwh: Double = 0.5,
     val autoWeatherAdaptiveHoursEnabled: Boolean = false,
-    val averageOutdoorTempC: Double? = null
+    val averageOutdoorTempC: Double? = null,
+    val decoupleDhwScheduleEnabled: Boolean = false,
+    val thermalDisinfectionEnabled: Boolean = false,
+    val thermalDisinfectionWeeklyDay: String = "Su",
+    val thermalDisinfectionTimeMinutes: Int = 720,
+    val maxAllowedInterDayOffHours: Double = 16.0,
+    val previousDayWindowEndMinute: Int? = null
 ) {
     val targetHeatingTempC: Double get() = temperatureSlider.snappedTempC
 }
@@ -361,7 +367,12 @@ class SwitchProgramScheduler(
         holisticConfig: HolisticOptimizationConfig? = null
     ): DailySwitchSchedulePlan? {
         if (holisticConfig != null) {
-            val holisticOptimizer = HolisticScheduleOptimizer(config = holisticConfig)
+            val effectiveHolistic = if (holisticConfig.previousDayWindowEndMinute == null && config.previousDayWindowEndMinute != null) {
+                holisticConfig.copy(previousDayWindowEndMinute = config.previousDayWindowEndMinute)
+            } else {
+                holisticConfig
+            }
+            val holisticOptimizer = HolisticScheduleOptimizer(config = effectiveHolistic)
             val plan = holisticOptimizer.buildSchedule(date, spotSlots, weatherForecast)
             if (plan != null) return plan
         }
@@ -389,8 +400,50 @@ class SwitchProgramScheduler(
         }
         val totalCostEuro = sharedWindows.sumOf { it.estimatedWindowCostEuro }
 
+        val isSundayDisinfection = config.thermalDisinfectionEnabled &&
+            (date.dayOfWeek == DayOfWeek.SUNDAY || dayCode.equals(config.thermalDisinfectionWeeklyDay, ignoreCase = true))
+        val tdStartMin = config.thermalDisinfectionTimeMinutes - 30
+        val tdEndMin = config.thermalDisinfectionTimeMinutes + 90
+
         val heatingWindows = sharedWindows.map { it.copy(setpoint = config.heatingOnSetpoint) }
-        val dhwWindows = sharedWindows.map { it.copy(setpoint = config.dhwOnSetpoint) }
+        val dhwWindows = if (config.decoupleDhwScheduleEnabled) {
+            if (isSundayDisinfection) {
+                listOf(
+                    TimeWindow(
+                        date = dateStr,
+                        dayOfWeekCode = dayCode,
+                        startMinutes = tdStartMin,
+                        endMinutes = tdEndMin,
+                        setpoint = config.dhwOnSetpoint
+                    )
+                )
+            } else {
+                val dhwDurationMin = 60
+                val dhwSlotsCount = (dhwDurationMin / config.timeRasterMinutes).coerceAtLeast(1)
+                val minSlot = (660 / config.timeRasterMinutes).coerceIn(0, rasterSlots.size - dhwSlotsCount)
+                val maxSlot = (960 / config.timeRasterMinutes).coerceIn(minSlot + dhwSlotsCount, rasterSlots.size)
+                var bestSlot = minSlot
+                var bestCost = Double.MAX_VALUE
+                for (s in minSlot..(maxSlot - dhwSlotsCount)) {
+                    val cost = (s until (s + dhwSlotsCount)).sumOf { rasterSlots[it].slotCostEuro }
+                    if (cost < bestCost) {
+                        bestCost = cost
+                        bestSlot = s
+                    }
+                }
+                listOf(
+                    TimeWindow(
+                        date = dateStr,
+                        dayOfWeekCode = dayCode,
+                        startMinutes = rasterSlots[bestSlot].startMinutes,
+                        endMinutes = rasterSlots[bestSlot + dhwSlotsCount - 1].endMinutes,
+                        setpoint = config.dhwOnSetpoint
+                    )
+                )
+            }
+        } else {
+            sharedWindows.map { it.copy(setpoint = config.dhwOnSetpoint) }
+        }
 
         val heatingSwitchPoints = windowsToSwitchPoints(
             dayOfWeekCode = dayCode,
@@ -814,9 +867,12 @@ class SwitchProgramScheduler(
             )
             logs.add("$prefix Would update /heatingCircuits/$hcId/switchPrograms/A and /dhwCircuits/$dhwId/switchPrograms/A for days ${hcUpdatesByDay.keys}:")
             plans.filter { it.dayOfWeekCode in hcUpdatesByDay.keys }.forEach { plan ->
-                plan.heatingSwitchPoints.zip(plan.dhwSwitchPoints).forEach { (hcSp, dhwSp) ->
+                plan.heatingSwitchPoints.forEach { hcSp ->
                     val stateLabel = if (hcSp.setpoint == config.heatingOnSetpoint) "ON (${sliderTemp}°C)" else "OFF"
-                    logs.add("   ${hcSp.dayOfWeek} ${hcSp.formatTimeHm()} (t=${hcSp.time}) -> Heating=$stateLabel, WarmWater=${dhwSp.setpoint}")
+                    logs.add("   ${hcSp.dayOfWeek} ${hcSp.formatTimeHm()} (t=${hcSp.time}) -> Space Heating=$stateLabel")
+                }
+                plan.dhwSwitchPoints.forEach { dhwSp ->
+                    logs.add("   ${dhwSp.dayOfWeek} ${dhwSp.formatTimeHm()} (t=${dhwSp.time}) -> Hot Water=${dhwSp.setpoint}")
                 }
             }
             val drySignatures = hcUpdatesByDay.mapValues { (day, pts) -> computeDaySignature(pts, day) }
@@ -885,7 +941,7 @@ class SwitchProgramScheduler(
         var hcUpdatesByDay = plans.mapIndexed { idx, plan ->
             plan.dayOfWeekCode to windowsToSwitchPoints(
                 dayOfWeekCode = plan.dayOfWeekCode,
-                windows = plan.sharedWindows,
+                windows = plan.heatingWindows.ifEmpty { plan.sharedWindows },
                 onSetpoint = hcOnSetpoint,
                 offSetpoint = hcOffSetpoint,
                 maxSwitchPoints = hcMaxPerDay,
@@ -896,7 +952,7 @@ class SwitchProgramScheduler(
         var dhwUpdatesByDay = plans.mapIndexed { idx, plan ->
             plan.dayOfWeekCode to windowsToSwitchPoints(
                 dayOfWeekCode = plan.dayOfWeekCode,
-                windows = plan.sharedWindows,
+                windows = plan.dhwWindows.ifEmpty { plan.sharedWindows },
                 onSetpoint = dhwOnSetpoint,
                 offSetpoint = dhwOffSetpoint,
                 maxSwitchPoints = dhwMaxPerDay,

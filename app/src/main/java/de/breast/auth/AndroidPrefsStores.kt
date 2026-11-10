@@ -466,6 +466,10 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
         get() = prefs.getFloat("thermal_disinfection_energy_kwh", 7.0f).toDouble()
         set(value) = prefs.edit().putFloat("thermal_disinfection_energy_kwh", value.toFloat()).apply()
 
+    var decoupleDhwScheduleEnabled: Boolean
+        get() = prefs.getBoolean("decouple_dhw_schedule_enabled", true)
+        set(value) = prefs.edit().putBoolean("decouple_dhw_schedule_enabled", value).apply()
+
     fun buildHolisticOptimizationConfig(
         targetHeatingTempC: Double = sliderTempC,
         liveStartingReturnTempC: Double? = null,
@@ -493,6 +497,7 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             adaptiveCycleCount = 0,
             dhwModelingEnabled = dhwModelingEnabled,
             dhwDailyEnergyKwh = dhwDailyEnergyKwh,
+            decoupleDhwScheduleEnabled = decoupleDhwScheduleEnabled,
             thermalDisinfectionEnabled = thermalDisinfectionEnabled,
             thermalDisinfectionWeeklyDay = thermalDisinfectionWeeklyDay,
             thermalDisinfectionTimeMinutes = thermalDisinfectionTimeMinutes,
@@ -512,7 +517,11 @@ class UserSettingsStore(context: Context) : de.breast.telemetry.ThermalParameter
             autoPowerModulationEnabled = autoPowerModulationEnabled,
             zeroPriceExtensionEnabled = if (isHolistic) zeroPriceExtensionEnabled else false,
             autoWeatherAdaptiveHoursEnabled = false, // When holistic is disabled, strictly adhere to slider runtime
-            averageOutdoorTempC = averageOutdoorTempC
+            averageOutdoorTempC = averageOutdoorTempC,
+            decoupleDhwScheduleEnabled = decoupleDhwScheduleEnabled,
+            thermalDisinfectionEnabled = thermalDisinfectionEnabled,
+            thermalDisinfectionWeeklyDay = thermalDisinfectionWeeklyDay,
+            thermalDisinfectionTimeMinutes = thermalDisinfectionTimeMinutes
         )
     }
 }
