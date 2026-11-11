@@ -485,10 +485,10 @@ class HolisticScheduleOptimizer(
                     val wasteHours = max(0.0, deltaH - maxArbitrageBufferHours)
                     val wastePenalty = wasteHours * (config.grossBaseFloorCtPerKwh / 100.0) * 10.0
                     val excessOffHours = if (interDayOffHours != null) max(0.0, interDayOffHours - config.maxAllowedInterDayOffHours) else 0.0
-                    val interDayCooldownPenalty = if (excessOffHours > 0.0) 1.5 * excessOffHours.pow(1.5) else 0.0
+                    val interDayCooldownPenalty = if (excessOffHours > 0.0) 0.5 * excessOffHours.pow(1.3) else 0.0
                     val disinfectionCollisionPenalty = if (isSundayDisinfection && (candStartMin < tdEndMin && candEndMin > tdStartMin)) 500.0 else 0.0
 
-                    val rawBudget = avgGrossCtPerKwh + wastePenalty + (interDayCooldownPenalty * 0.2) + disinfectionCollisionPenalty
+                    val rawBudget = avgGrossCtPerKwh + wastePenalty + disinfectionCollisionPenalty
 
                     // B. Efficiency Utility (Carnot specific consumption + cold-restart rebound penalty + longer daytime duration bonus)
                     val effSum = prefixScore[endIdx] - prefixScore[startIdx]
@@ -498,7 +498,7 @@ class HolisticScheduleOptimizer(
                         // In efficiency mode: prefer longer daytime window (up to +2.0h above target) at low inverter modulation.
                         -0.05 * max(0.0, durH - userTargetHours)
                     } else 0.0
-                    val rawEfficiency = avgEffScore + reboundPenalty + longerDurationBonus + (interDayCooldownPenalty * 0.4) + disinfectionCollisionPenalty
+                    val rawEfficiency = avgEffScore + reboundPenalty + longerDurationBonus + disinfectionCollisionPenalty
 
                     // C. Comfort Utility (Screed diffusion delay ~2.5h + runtime deficit penalty + off-gap cooldown + inter-day cooldown)
                     val emitStart = startIdx + lagSlots
