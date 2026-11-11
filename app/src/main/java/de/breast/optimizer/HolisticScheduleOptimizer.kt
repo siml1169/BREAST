@@ -312,7 +312,7 @@ class HolisticScheduleOptimizer(
                 heatingCurveSlope = 0.65,
                 comfortRoomTempC = config.targetHeatingTempC,
                 setbackRoomTempC = 17.0,
-                nominalThermalKw = config.heatPumpMaxThermalKw,
+                nominalThermalKw = config.heatPumpNominalThermalKw,
                 circulationPumpKw = config.circulationPumpKw,
                 standbyPowerKw = setbackContinuousPowerKw,
                 parasiticBaselinePowerKw = config.customMeasuredParasiticLoadKw ?: config.parasiticBaselinePowerKw,
@@ -1046,7 +1046,7 @@ class HolisticScheduleOptimizer(
                     slotGrossCtPerKwh = slotGrossCt,
                     rasterMinutes = rasterMinutes,
                     initialReturnTempC = initialReturnTempC,
-                    targetDailyThermalEnergyNeedKwh = dailyEnergyNeedKwh
+                    targetDailyThermalEnergyNeedKwh = null
                 )
                 WindowEvalResult(
                     windowCostEuro = sim.windowCostEuro,

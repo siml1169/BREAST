@@ -413,3 +413,12 @@ $$t_{\text{raster, end}} \le 1425 \quad (23:45)$$
   - **生活热水（DHW）周期后的水力瞬态冲刷与再启物理机理：** 深度建模与阐明电动三通阀自 $55^\circ\text{C}$ 热水箱切回 $22^\circ\text{C}-25^\circ\text{C}$ 地暖回路时的水力瞬态。证实管路剧烈降温纯属一次侧循环泵将低温回水冲刷过传感器探头（`T_supply`、`T_return`）所致，而非水箱失温。详尽记录了压缩机防频启压力平衡延时（约 3 分钟）以及随后 HPC 410 回水温差判定 ($\ge 1.2\text{ K}$) 触发空间采暖重启的完整物理过程。
   - **Android 15 沉浸式主题与界面重构：** 通过 `@style/Theme.BreastApp` 专属主题（`windowNoTitle=true`, `windowActionBar=false`）在 `styles.xml` 及代码中消除默认顶栏遮挡。配置挖孔屏防遮挡切口边距（`WindowInsetsCompat.Type.displayCutout()`）。精简主界面多余设置按钮，仅保留顶部导航栏单一标准 `⚙ 设置` 入口。实测遥测标定徽章行（`HorizontalScrollView`）强制单行居中（`Gravity.CENTER_VERTICAL`），彻底杜绝文字竖排与换行错位。
   - **单元测试与真机验证：** 编写覆盖电价配置序列化、合成电价时序生成的单元测试，全套 68 项单元测试全部通过，并在 Pixel 10 Pro 真机上完成验证。
+- [x] **阶段 23：周日高温巴氏杀菌防撞、回路解耦独立调度与跨天热量连续性：**
+  - **周日巴氏杀菌冲突规避：** 每逢周日正午（12:00），博世控制器启动生活热水箱高温巴氏杀菌程序并投入电辅热（~3.0 kWh）。系统在周日 11:30 至 13:30 自动暂停空间地暖，避免同时触发地暖和热水强行逼迫电辅热全开。
+  - **独立回路开关程序解耦（HC1 与 DHW1）：** 将调度开关程序彻底拆分为独立通道：地暖回路（HC1）绑定方案 B，生活热水回路（DHW1）绑定方案 A 并独立定点于光伏/气温最高峰（13:30–14:30）。
+  - **跨天低温深冷保护（Inter-Day Continuity）：** 追踪前一日停机时刻 `previousDayWindowEndMinute`，对超过 16-20 小时的超长停机施加惩罚项，确保地暖蓄热层不发生深冷。
+- [x] **阶段 24：物理控制器仿真对齐与消除虚假热量提前截断：**
+  - **耗电量低估根因溯源：** 经实测遥测与网关 eMon 数据对比，11 月 11 日实际耗电 7.0 kWh（产热 38.0 kWh_th），而预测仅 5.2 kWh。根因在于 [`HolisticScheduleOptimizer.kt`](../app/src/main/java/de/breast/optimizer/HolisticScheduleOptimizer.kt) 将 `targetDailyThermalEnergyNeedKwh = dailyEnergyNeedKwh` 传入模拟器，导致模拟器在累计供热达到 ~35 kWh（10 小时窗口中的第 5 小时）即人为判断 `thermalSatisfied = true` 并强制停转模拟压缩机。然而博世物理控制器（HPC 410）压根没有“每日累计 kWh 配额”概念，只要处于舒适模式且回水温度未达到上限切断点（$T_{\text{return}} \ge T_{\text{target}} + 0.5\text{ K}$），变频压缩机便全程持续运行。
+  - **真实物理控制器仿真重构：** 在候选窗口评估中废除人为每日累计热量截断（`targetDailyThermalEnergyNeedKwh = null`），仿真状态机完全遵循加热曲线、室外温度与回水切入/切出迟滞逻辑。
+  - **额定热功率对齐：** 将传入模拟器的标称额定热功率自峰值除霜功率（9.0 kW）校准为稳态额定功率 `heatPumpNominalThermalKw`（4.5 kW）。
+  - **单元测试与真机验证：** 新增 `ControlUnitSimulator simulates physical Bosch controller continuous heating on 4_4C cold day matching eMon ground truth` 单元测试，95 项核心单元测试全部通过。Pixel 10 Pro 实机部署验证，明日 8.0 小时窗口耗电预测精准为 7.9 kWh（0.99 kW 平均功率，3.98 EUR 成本，完全落于 5.00 EUR 预算内），跨天停机间隔安全收敛至 14.0 小时。

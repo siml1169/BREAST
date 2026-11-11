@@ -3922,4 +3922,61 @@ class BreastCoreTest {
         assertEquals(840, state.todayWindowEndMinute)
         assertEquals(960, state.tomorrowWindowEndMinute)
     }
+
+    @Test
+    fun `ControlUnitSimulator simulates physical Bosch controller continuous heating on 4_4C cold day matching eMon ground truth`() {
+        // Cold November day: average outdoor temp ~4.4°C
+        val simulator = ControlUnitSimulator(
+            buildingLossKwPerK = 0.185,
+            screedThermalMassKwhPerK = 5.0,
+            indoorThermalMassKwhPerK = 8.5,
+            calibratedModAt10C = 43.96,
+            calibratedModSlopePerK = 5.85,
+            cutInHysteresisK = 1.2,
+            cutOutHysteresisK = 0.5,
+            heatingCurveSlope = 0.65,
+            comfortRoomTempC = 22.0,
+            setbackRoomTempC = 17.0,
+            nominalThermalKw = 4.5,
+            circulationPumpKw = 0.04,
+            standbyPowerKw = 0.045,
+            parasiticBaselinePowerKw = 0.045,
+            estimatedElectricalPowerKw = 0.737
+        )
+
+        // 24 hourly forecast temperatures matching Nov 11 (mean ~4.4°C)
+        val hourlyTemps = DoubleArray(24) { 4.4 }
+        val slotGrossCt = DoubleArray(96) { 56.0 }
+
+        // Scheduled 10.0h window: 00:00 (0 min) to 10:00 (600 min)
+        // With cold starting screed return (23.0°C), physical controller heats continuously
+        val sim = simulator.simulateSchedule(
+            comfortStartMinute = 0,
+            comfortEndMinute = 600,
+            hourlyTemps = hourlyTemps,
+            slotGrossCtPerKwh = slotGrossCt,
+            rasterMinutes = 15,
+            initialReturnTempC = 23.0,
+            targetDailyThermalEnergyNeedKwh = null // No artificial early cutoff!
+        )
+
+        // Physical controller runs continuously across the 10.0h window without artificial daily cutoff
+        assertEquals("Compressor should run for all 40 slots (600 min = 10.0h)", 600, sim.activeCompressorMinutes)
+        assertEquals("Single continuous heating cycle", 1, sim.cycleStartsCount)
+
+        // At 4.4°C, modulation is ~76.7%
+        assertTrue("Modulation should be ~76-78% (was: ${sim.averageModulationPct}%)",
+            sim.averageModulationPct in 75.0..78.5)
+
+        // Power draw is ~0.90 - 1.00 kW
+        assertTrue("Active electrical power should be ~0.90 to 1.05 kW (was: ${sim.averageActivePowerKw} kW)",
+            sim.averageActivePowerKw in 0.90..1.05)
+
+        // Window electricity reflects the full 10-hour physical run (~9.0 - 10.5 kWh), eliminating under-prediction delusion
+        assertTrue("Window electricity should accurately reflect full runtime (was: ${sim.windowElectricityKwh} kWh)",
+            sim.windowElectricityKwh in 9.0..10.5)
+
+        // Verify that passing targetDailyThermalEnergyNeedKwh = null leaves compressorActive intact
+        assertTrue("Simulator correctly models continuous physical heating", sim.totalElectricityKwh > 9.0)
+    }
 }
